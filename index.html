@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0d0c" />
+    <meta name="description" content="A mechanically detailed, fully interactive 3D manual typewriter simulation." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23090d0c'/%3E%3Cpath d='M12 17h40v25H12zM8 42h48v9H8z' fill='%23d7b36e'/%3E%3Cpath d='M18 23h28v13H18z' fill='%23eee4ce'/%3E%3C/svg%3E" />
+    <title>Meridian No. 88 — Mechanical Typewriter</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="scene" tabindex="-1" aria-label="Interactive three-dimensional mechanical typewriter"></canvas>
+      <div class="atmosphere" aria-hidden="true"></div>
+      <div class="film-grain" aria-hidden="true"></div>
+
+      <header class="masthead ui-layer">
+        <button class="brand-lockup bare-button" id="home-view" aria-label="Return to writer view">
+          <span class="brand-kicker">MBS WORKS · PHILADELPHIA</span>
+          <span class="brand-name">MERIDIAN <i>88</i></span>
+        </button>
+        <div class="machine-readout" aria-label="Machine status">
+          <div class="readout-cell">
+            <span class="readout-label">POSITION</span>
+            <strong id="position-readout">01 · 01</strong>
+          </div>
+          <div class="readout-cell">
+            <span class="readout-label">RIBBON</span>
+            <strong id="ribbon-readout">BLACK · →</strong>
+          </div>
+          <div class="readout-cell hide-compact">
+            <span class="readout-label">SHEET</span>
+            <strong id="sheet-readout">LETTER · 01</strong>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-button" id="sound-toggle" aria-label="Toggle sound" aria-pressed="true" title="Sound">
+            <span class="sound-icon">◖))</span>
+          </button>
+          <button class="text-button" id="guide-open">FIELD GUIDE</button>
+        </div>
+      </header>
+
+      <aside class="mechanism-card ui-layer" aria-label="Mechanical status">
+        <div class="panel-heading">
+          <span>MECHANISM / LIVE</span>
+          <span class="status-lamp" id="status-lamp"></span>
+        </div>
+        <div class="mechanism-row">
+          <div class="mechanism-copy"><span>Escapement</span><strong id="escapement-status">DOG ENGAGED</strong></div>
+          <div class="mini-gauge"><i id="escapement-gauge"></i></div>
+        </div>
+        <div class="mechanism-row">
+          <div class="mechanism-copy"><span>Ribbon travel</span><strong id="ribbon-status">12%</strong></div>
+          <div class="mini-gauge ribbon-gauge"><i id="ribbon-gauge"></i></div>
+        </div>
+        <div class="mechanism-row">
+          <div class="mechanism-copy"><span>Touch force</span><strong id="force-status">MEDIUM</strong></div>
+          <div class="force-dots" aria-hidden="true"><i></i><i class="active"></i><i></i></div>
+        </div>
+        <button class="inspection-toggle" id="inspection-toggle" aria-pressed="false">
+          <span class="inspection-icon">⌁</span>
+          <span><b>INSPECTION MODE</b><small>Reveal linkages & escapement</small></span>
+        </button>
+      </aside>
+
+      <nav class="view-dial ui-layer" aria-label="Camera views">
+        <span class="dial-label">VIEW</span>
+        <button data-view="writer" class="view-button active" aria-label="Writer view"><span>01</span><b>WRITER</b></button>
+        <button data-view="mechanism" class="view-button" aria-label="Mechanism view"><span>02</span><b>ACTION</b></button>
+        <button data-view="ribbon" class="view-button" aria-label="Ribbon view"><span>03</span><b>RIBBON</b></button>
+        <button data-view="carriage" class="view-button" aria-label="Carriage view"><span>04</span><b>CARRIAGE</b></button>
+      </nav>
+
+      <section class="ink-selector ui-layer" aria-label="Ribbon color selector">
+        <span class="selector-title">INK</span>
+        <button data-ink="black" class="ink-button black active" aria-label="Black ribbon" aria-pressed="true" title="Black ribbon"></button>
+        <button data-ink="red" class="ink-button red" aria-label="Red ribbon" aria-pressed="false" title="Red ribbon"></button>
+        <button data-ink="stencil" class="ink-button stencil" aria-label="Stencil, no ink" aria-pressed="false" title="Stencil / no ink"></button>
+      </section>
+
+      <section class="document-tray ui-layer" aria-label="Document controls">
+        <button class="tray-handle" id="document-toggle" aria-expanded="false">
+          <span class="paper-stack-icon">▤</span>
+          <span><b>DOCUMENT</b><small id="document-summary">Blank sheet loaded</small></span>
+          <span class="tray-chevron">⌃</span>
+        </button>
+        <div class="tray-content" id="document-content" aria-hidden="true" inert>
+          <div class="transcript-wrap">
+            <span class="field-label">TYPECRIPT</span>
+            <pre id="transcript" aria-label="Typed document preview">The page is waiting.</pre>
+          </div>
+          <div class="tray-actions">
+            <button id="download-text">SAVE .TXT</button>
+            <button id="download-paper">SAVE PAPER</button>
+            <button id="new-sheet" class="danger-subtle">NEW SHEET</button>
+          </div>
+        </div>
+      </section>
+
+      <label class="mobile-keyboard ui-layer" for="mobile-input">
+        <span>TYPE ON PAPER</span>
+        <textarea id="mobile-input" rows="1" inputmode="text" enterkeyhint="enter" autocapitalize="sentences" autocomplete="off" spellcheck="false" placeholder="Tap, then type…" aria-label="Mobile typewriter keyboard"></textarea>
+      </label>
+
+      <footer class="key-legend ui-layer">
+        <div><kbd>TYPE</kbd><span>STRIKE KEYS</span></div>
+        <div><kbd>↵</kbd><span>RETURN + FEED</span></div>
+        <div><kbd>⌫</kbd><span>BACK SPACE</span></div>
+        <div><kbd>⇪</kbd><span>SHIFT LOCK</span></div>
+        <div class="mouse-legend"><span class="mouse-icon">◉</span><span>DRAG TO ORBIT · SCROLL TO DOLLY</span></div>
+      </footer>
+
+      <div class="margin-warning ui-layer" id="margin-warning" role="status" aria-live="polite">
+        <span>●</span> RIGHT MARGIN — RETURN CARRIAGE
+      </div>
+
+      <div class="toast ui-layer" id="toast" role="status" aria-live="polite"></div>
+      <div class="sr-only" id="screen-reader-status" aria-live="polite"></div>
+
+      <section class="intro-overlay ui-layer" id="intro-overlay" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+        <div class="intro-rule"></div>
+        <div class="intro-content">
+          <span class="intro-index">A MECHANICAL STUDY · 1938 / 2026</span>
+          <h1 id="intro-title">Every letter<br /><em>leaves a mark.</em></h1>
+          <p>A working manual typewriter, reconstructed in three dimensions. Your keyboard drives its keys, typebars, ribbon, escapement, carriage, and paper.</p>
+          <button class="enter-button" id="enter-studio" autofocus>
+            <span>ENTER THE WRITING ROOM</span><i>→</i>
+          </button>
+          <small>Sound begins after entry · Headphones recommended</small>
+        </div>
+        <div class="intro-mechanics" aria-hidden="true">
+          <span>KEY</span><i></i><span>LINK</span><i></i><span>TYPEBAR</span><i></i><span>IMPRESSION</span><i></i><span>ESCAPEMENT</span>
+        </div>
+      </section>
+
+      <dialog class="field-guide ui-layer" id="field-guide">
+        <form method="dialog" class="guide-shell">
+          <header class="guide-header">
+            <div><span>OPERATOR'S MANUAL</span><h2>MERIDIAN No. 88</h2></div>
+            <button class="guide-close" value="close" aria-label="Close field guide">×</button>
+          </header>
+          <div class="guide-tabs" role="tablist">
+            <button type="button" class="guide-tab active" data-tab="operation">OPERATION</button>
+            <button type="button" class="guide-tab" data-tab="mechanics">HOW IT WORKS</button>
+            <button type="button" class="guide-tab" data-tab="research">RESEARCH</button>
+          </div>
+          <div class="guide-page active" data-page="operation">
+            <div class="manual-grid">
+              <article><span class="manual-number">01</span><h3>Write</h3><p>Type on your physical keyboard or click the modeled keys. Shift selects the upper character; Caps Lock holds the type basket in its shifted position.</p></article>
+              <article><span class="manual-number">02</span><h3>Return</h3><p>Press Enter to sweep the carriage to the left margin. The return lever indexes the platen one line and feeds the paper upward.</p></article>
+              <article><span class="manual-number">03</span><h3>Correct</h3><p>Backspace reverses the escapement by one tooth. Like a real machine, it does not erase ink: type again to create an overstrike.</p></article>
+              <article><span class="manual-number">04</span><h3>Inspect</h3><p>Use the numbered views, orbit the camera, or enable Inspection Mode to open the shell and expose the universal bar, key links, escapement, and bell.</p></article>
+            </div>
+          </div>
+          <div class="guide-page" data-page="mechanics">
+            <ol class="action-chain">
+              <li><b>KEY LEVER</b><span>The key descends and pulls a mechanical link.</span></li>
+              <li><b>TYPEBAR</b><span>The link accelerates one bar through the slotted segment toward the printing point.</span></li>
+              <li><b>RIBBON VIBRATOR</b><span>A universal bail lifts fresh ribbon between the type slug and paper at the instant of impact.</span></li>
+              <li><b>IMPRESSION</b><span>Force transfers a slightly imperfect film of ink through the fabric ribbon onto paper backed by the rubber platen.</span></li>
+              <li><b>ESCAPEMENT</b><span>The universal bar alternates two dogs on a toothed wheel, releasing the spring-biased carriage exactly one pitch.</span></li>
+              <li><b>RIBBON FEED</b><span>Each stroke winds a fraction of ribbon onto one spool. End eyelets reverse the drive before the inked length runs out.</span></li>
+            </ol>
+          </div>
+          <div class="guide-page" data-page="research">
+            <p class="research-lede">The simulation is a fictional composite machine, but its action follows documented manual typewriter mechanisms.</p>
+            <ul class="source-list">
+              <li><a href="https://site.xavier.edu/polt/typewriters/IBMservice1939.pdf" target="_blank" rel="noreferrer"><span>01</span><b>1939 Mechanical Manual</b><small>Universal bar, type action, and escapement</small></a></li>
+              <li><a href="https://patents.google.com/patent/US2212435A/en" target="_blank" rel="noreferrer"><span>02</span><b>Carriage Escapement Patent</b><small>Pawls, wheel, shift, and letter spacing</small></a></li>
+              <li><a href="https://patents.google.com/patent/US1402264A/en" target="_blank" rel="noreferrer"><span>03</span><b>Ribbon Vibrator Patent</b><small>Universal bail and bichrome ribbon lift</small></a></li>
+              <li><a href="https://patents.google.com/patent/US2021195A/en" target="_blank" rel="noreferrer"><span>04</span><b>Line Spacer Patent</b><small>Platen ratchet and carriage-return feed</small></a></li>
+              <li><a href="https://site.xavier.edu/polt/typewriters/tw-faq.html" target="_blank" rel="noreferrer"><span>05</span><b>Ribbon Reference</b><small>Half-inch dual-color ribbons and automatic reverse eyelets</small></a></li>
+            </ul>
+          </div>
+          <footer class="guide-footer"><span>SIMULATION BUILD 1.0</span><span>DESIGNED FOR PHYSICAL KEYBOARDS + POINTER</span></footer>
+        </form>
+      </dialog>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

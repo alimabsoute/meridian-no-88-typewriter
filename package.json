@@ -1,0 +1,26 @@
+{
+  "name": "meridian-typewriter-simulator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "vitest run",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:interaction": "node scripts/interaction-check.mjs",
+    "test:visual": "node scripts/visual-check.mjs",
+    "verify": "npm test && npm run build"
+  },
+  "dependencies": {
+    "@fontsource/bebas-neue": "^5.2.6",
+    "@fontsource/special-elite": "^5.2.6",
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.61.1",
+    "vite": "^7.0.6",
+    "vite-plugin-singlefile": "^2.3.0",
+    "vitest": "^3.2.4"
+  }
+}
