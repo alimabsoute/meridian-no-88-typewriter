@@ -64,6 +64,30 @@ async function pressAndCaptureKeyPeak(page, { key, code, otherCodes = [], thresh
   }
 }
 
+async function settleKeyboardModel(page, codes, maxSteps = 128) {
+  const state = await page.evaluate(({ keyCodes, steps }) => {
+    const model = window.__MERIDIAN__.model;
+    for (let step = 0; step < steps; step += 1) {
+      const resting = keyCodes.every(
+        (code) => (model.keys.get(code)?.depression ?? 1) < 0.02,
+      );
+      if (!model.busy && resting) return { settled: true, step };
+      model.update(0.04);
+    }
+    return {
+      settled: false,
+      busy: model.busy,
+      depressions: Object.fromEntries(
+        keyCodes.map((code) => [code, model.keys.get(code)?.depression ?? null]),
+      ),
+    };
+  }, { keyCodes: codes, steps: maxSteps });
+
+  if (!state.settled) {
+    throw new Error(`Keyboard model did not settle: ${JSON.stringify(state)}`);
+  }
+}
+
 async function waitForSimulator(page) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
@@ -183,12 +207,7 @@ try {
       otherCodes: representativeCodes.filter((code) => code !== representative.code),
     });
 
-    await keyboardPage.waitForFunction(
-      (code) => !window.__MERIDIAN__.model.busy
-        && (window.__MERIDIAN__.model.keys.get(code)?.depression ?? 1) < 0.02,
-      representative.code,
-      { timeout: 10000 },
-    );
+    await settleKeyboardModel(keyboardPage, representativeCodes);
     expectedKeyboardText += representative.character;
     const settled = await keyboardPage.evaluate(() => ({
       text: window.__MERIDIAN__.document.toPlainText(),
@@ -209,29 +228,21 @@ try {
 
   const marksBeforeTab = await keyboardPage.evaluate(() => window.__MERIDIAN__.document.marks.length);
   const tabPeak = (await pressAndCaptureKeyPeak(keyboardPage, { key: 'Tab', code: 'Tab' })).target;
-  await keyboardPage.waitForFunction(
-    () => !window.__MERIDIAN__.model.busy && window.__MERIDIAN__.document.column === 8,
-    null,
-    { timeout: 10000 },
-  );
+  await settleKeyboardModel(keyboardPage, ['Tab']);
   const afterTab = await keyboardPage.evaluate(() => ({
     column: window.__MERIDIAN__.document.column,
     marks: window.__MERIDIAN__.document.marks.length,
   }));
 
   const backspacePeak = (await pressAndCaptureKeyPeak(keyboardPage, { key: 'Backspace', code: 'Backspace' })).target;
-  await keyboardPage.waitForFunction(
-    () => !window.__MERIDIAN__.model.busy && window.__MERIDIAN__.document.column === 7,
-    null,
-    { timeout: 10000 },
-  );
+  await settleKeyboardModel(keyboardPage, ['Backspace']);
   const afterBackspace = await keyboardPage.evaluate(() => ({
     column: window.__MERIDIAN__.document.column,
     marks: window.__MERIDIAN__.document.marks.length,
   }));
 
   await keyboardPage.keyboard.type('x');
-  await keyboardPage.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 10000 });
+  await settleKeyboardModel(keyboardPage, ['KeyX']);
   const afterRecoveryType = await keyboardPage.evaluate(() => ({
     column: window.__MERIDIAN__.document.column,
     text: window.__MERIDIAN__.document.toPlainText(),
