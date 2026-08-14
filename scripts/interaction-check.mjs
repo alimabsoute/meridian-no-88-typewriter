@@ -71,12 +71,27 @@ async function settleKeyboardModel(page, codes, maxSteps = 128) {
       const resting = keyCodes.every(
         (code) => (model.keys.get(code)?.depression ?? 1) < 0.02,
       );
-      if (!model.busy && resting) return { settled: true, step };
+      const keyboardIdle = !model.returning
+        && !model.tabMotion
+        && model.activeStrikes.length === 0
+        && model.commandQueue.length === 0;
+      if (keyboardIdle && resting) return { settled: true, step };
       model.update(0.04);
     }
     return {
       settled: false,
       busy: model.busy,
+      activeStrikes: model.activeStrikes.map((command) => ({
+        type: command.type,
+        code: command.code,
+        phase: command.phase,
+        duration: command.duration,
+        elapsed: command.elapsed,
+      })),
+      queue: model.commandQueue.map((command) => ({ type: command.type, code: command.code })),
+      returning: Boolean(model.returning),
+      tabMotion: Boolean(model.tabMotion),
+      paperLoading: Boolean(model.paperLoading),
       depressions: Object.fromEntries(
         keyCodes.map((code) => [code, model.keys.get(code)?.depression ?? null]),
       ),
