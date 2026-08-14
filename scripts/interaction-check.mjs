@@ -9,6 +9,9 @@ import {
 const configuredTargetUrl = process.env.TARGET_URL || withQuality(DEFAULT_PREVIEW_URL, 'low');
 const preview = await ensurePreviewServer({ targetUrl: configuredTargetUrl });
 const targetUrl = preview.targetUrl;
+// Real browser delivery at 500 WPM complements the deterministic 12 ms
+// (1,000 WPM) mechanics-kernel stress in typewriter-model.test.js.
+const BROWSER_BURST_DELAY_MS = 24;
 
 function deterministicRandom() {
   let seed = 0x4d455249;
@@ -446,7 +449,9 @@ try {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
   await page.evaluate(() => window.__MERIDIAN__.model.resetLatencyMetrics());
-  await page.keyboard.type('The quick brown fox jumps over 13 lazy dogs!', { delay: 12 });
+  await page.keyboard.type('The quick brown fox jumps over 13 lazy dogs!', {
+    delay: BROWSER_BURST_DELAY_MS,
+  });
   await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 30000 });
   const first = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
   if (first !== 'The quick brown fox jumps over 13 lazy dogs!') {
@@ -455,7 +460,11 @@ try {
   latency = await page.evaluate(() => window.__MERIDIAN__.model.getLatencySnapshot());
   paperUploads = await page.evaluate(() => window.__MERIDIAN__.model.paperRenderer.getUploadStats());
   if (latency.startMs.p95 > 50 || latency.impactMs.p95 > 125 || latency.peakQueueDepth > 4) {
-    throw new Error(`Typing latency regression: ${JSON.stringify({ averageFrameMs, latency })}`);
+    throw new Error(`Typing latency regression: ${JSON.stringify({
+      averageFrameMs,
+      browserBurstDelayMs: BROWSER_BURST_DELAY_MS,
+      latency,
+    })}`);
   }
   if (!paperUploads.partialUploads || paperUploads.partialBytes >= paperUploads.fullTextureBytes * 0.2) {
     throw new Error(`Paper texture upload regression: ${JSON.stringify(paperUploads)}`);
