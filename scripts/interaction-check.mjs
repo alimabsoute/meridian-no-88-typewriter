@@ -25,40 +25,52 @@ function collectErrors(page) {
   return errors;
 }
 
-async function pressAndCaptureKeyPeak(page, { key, code, otherCodes = [], threshold = 0.18 }) {
-  await page.evaluate(({ targetCode, comparisonCodes, targetThreshold }) => {
-    const sample = {
-      target: 0,
-      others: Object.fromEntries(comparisonCodes.map((comparisonCode) => [comparisonCode, 0])),
-      modeledName: window.__MERIDIAN__.model.keys.get(targetCode)?.group?.name,
-      done: false,
-    };
-    window.__MERIDIAN_KEY_PEAK__ = sample;
-    function capture() {
-      sample.target = Math.max(
-        sample.target,
-        window.__MERIDIAN__.model.keys.get(targetCode)?.depression ?? 0,
-      );
-      for (const comparisonCode of comparisonCodes) {
-        sample.others[comparisonCode] = Math.max(
-          sample.others[comparisonCode],
-          window.__MERIDIAN__.model.keys.get(comparisonCode)?.depression ?? 0,
-        );
-      }
-      sample.done = sample.target > targetThreshold;
-      if (!sample.done) requestAnimationFrame(capture);
-    }
-    requestAnimationFrame(capture);
-  }, { targetCode: code, comparisonCodes: otherCodes, targetThreshold: threshold });
-
+async function pressAndCaptureKeyPeak(page, {
+  key,
+  code,
+  otherCodes = [],
+  threshold = 0.18,
+  maxSteps = 96,
+}) {
   await page.keyboard.down(key);
   try {
-    await page.waitForFunction(
-      () => window.__MERIDIAN_KEY_PEAK__?.done,
-      null,
-      { timeout: 5_000 },
-    );
-    return page.evaluate(() => ({ ...window.__MERIDIAN_KEY_PEAK__ }));
+    return await page.evaluate(({
+      targetCode,
+      comparisonCodes,
+      targetThreshold,
+      steps,
+    }) => {
+      const model = window.__MERIDIAN__.model;
+      const sample = {
+        target: 0,
+        others: Object.fromEntries(comparisonCodes.map((comparisonCode) => [comparisonCode, 0])),
+        modeledName: model.keys.get(targetCode)?.group?.name,
+        done: false,
+      };
+      for (let step = 0; step < steps; step += 1) {
+        model.update(1 / 120);
+        sample.target = Math.max(sample.target, model.keys.get(targetCode)?.depression ?? 0);
+        for (const comparisonCode of comparisonCodes) {
+          sample.others[comparisonCode] = Math.max(
+            sample.others[comparisonCode],
+            model.keys.get(comparisonCode)?.depression ?? 0,
+          );
+        }
+        if (sample.target > targetThreshold) {
+          sample.done = true;
+          break;
+        }
+      }
+      if (!sample.done) {
+        throw new Error(`Key ${targetCode} did not reach its modeled peak: ${JSON.stringify(sample)}`);
+      }
+      return sample;
+    }, {
+      targetCode: code,
+      comparisonCodes: otherCodes,
+      targetThreshold: threshold,
+      steps: maxSteps,
+    });
   } finally {
     await page.keyboard.up(key);
   }
