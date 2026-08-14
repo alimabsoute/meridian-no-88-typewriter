@@ -103,7 +103,12 @@ export async function launchBrowser({
   extraArgs = [],
 } = {}) {
   const executablePath = await resolveBrowserExecutable();
-  const args = ['--ignore-gpu-blocklist'];
+  const args = [
+    '--ignore-gpu-blocklist',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+  ];
 
   if (disableWebgl) {
     args.push('--disable-webgl', '--disable-software-rasterizer');

@@ -430,6 +430,9 @@ const averageFrameMs = await page.evaluate(() => new Promise((resolve) => {
 // GitHub's headless SwiftShader can spend seconds rasterizing this 600-object
 // scene. Isolate the real-time mechanics gate from GPU throughput; rendered
 // room/machine behavior is exercised by the performance and visual suites.
+const fullSceneViewport = page.viewportSize();
+if (!fullSceneViewport) throw new Error('The mechanics latency page has no viewport');
+await page.setViewportSize({ width: 160, height: 120 });
 const sceneWasVisible = await page.evaluate(() => {
   const { model } = window.__MERIDIAN__;
   const visible = model.scene.visible;
@@ -458,6 +461,7 @@ try {
     throw new Error(`Paper texture upload regression: ${JSON.stringify(paperUploads)}`);
   }
 } finally {
+  await page.setViewportSize(fullSceneViewport);
   await page.evaluate((visible) => {
     window.__MERIDIAN__.model.scene.visible = visible;
   }, sceneWasVisible);
