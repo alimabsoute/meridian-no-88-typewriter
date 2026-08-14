@@ -80,6 +80,6 @@ The release contains:
   page lifecycle, persistence, weather controls, reduced motion, and exports.
 - Screenshot checks for intro, Writer, typed page, Inspection, page handling,
   kept manuscript, crumpled discard, rain, and snow.
-- Instrumented latency and burst checks with timestamps from input through impact.
+- Instrumented renderer-isolated browser latency and burst checks with real timestamps from input through impact; full-scene rendering is checked separately.
 - Desktop, narrow viewport, direct-file, WebGL-disabled, and quality-fallback checks.
 - Clean production build and a final manual visual review at full resolution.

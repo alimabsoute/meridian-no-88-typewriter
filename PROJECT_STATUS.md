@@ -25,7 +25,7 @@
 
 - `77` unit tests pass across document, machine, geometry, paper state/view/storage, mechanical audio, room state/view/backdrop, and atmosphere audio.
 - A simulated 15/60/120-minute writing test completes with empty transient queues, bounded latency history, and exact action counts.
-- A rapid 44-character browser burst preserved exact text order with p95 feedback of `0.7 ms`, p95 physical impact of `50.5 ms`, and a peak queue depth of `1`.
+- A renderer-isolated 44-character browser burst preserved exact text order with p95 feedback of `0.7 ms`, p95 physical impact of `50.5 ms`, and a peak queue depth of `1`; full-scene rendering is gated separately.
 - Exhaustive unit checks cover every printable key/character; real browser input covers Backquote and all four rows plus Tab, Backspace, independent Shift, return, red ribbon, mobile input, and focus recovery.
 - Minimum swept key-to-shell clearance measured `+0.0677`; the minimum across 52 neighboring pairs measured `+0.0350`; Equal/Backspace measured `+0.0450`.
 - A 5 MiB quota test stored 25 completely full 65×46 pages at a `3,685,956`-byte transactional peak and wrote only one page blob on the final checkpoint.
