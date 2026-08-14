@@ -12,6 +12,7 @@ const targetUrl = preview.targetUrl;
 // Real browser delivery at 500 WPM complements the deterministic 12 ms
 // (1,000 WPM) mechanics-kernel stress in typewriter-model.test.js.
 const BROWSER_BURST_DELAY_MS = 24;
+const ISOLATED_RENDER_SIZE = Object.freeze({ width: 160, height: 120 });
 
 function deterministicRandom() {
   let seed = 0x4d455249;
@@ -435,7 +436,7 @@ const averageFrameMs = await page.evaluate(() => new Promise((resolve) => {
 // room/machine behavior is exercised by the performance and visual suites.
 const fullSceneViewport = page.viewportSize();
 if (!fullSceneViewport) throw new Error('The mechanics latency page has no viewport');
-await page.setViewportSize({ width: 160, height: 120 });
+await page.setViewportSize(ISOLATED_RENDER_SIZE);
 const sceneWasVisible = await page.evaluate(() => {
   const { model } = window.__MERIDIAN__;
   const visible = model.scene.visible;
@@ -477,14 +478,15 @@ try {
 }
 
 await page.keyboard.press('Enter');
-await page.waitForFunction(() => window.__MERIDIAN__.document.line === 1, null, { timeout: 10000 });
+await settleKeyboardModel(page, []);
 await page.click('[data-ink="red"]');
 await page.waitForFunction(() => document.activeElement?.id === 'scene');
 await page.keyboard.type('Red ribbon test?', { delay: 12 });
-await page.waitForFunction(() => window.__MERIDIAN__.document.column === 16, null, { timeout: 20000 });
+await settleKeyboardModel(page, []);
 await page.keyboard.press('Backspace');
+await settleKeyboardModel(page, []);
 await page.keyboard.type('!');
-await page.waitForFunction(() => window.__MERIDIAN__.document.marks.at(-1)?.character === '!', null, { timeout: 10000 });
+await settleKeyboardModel(page, []);
 const state = await page.evaluate(() => ({
   text: window.__MERIDIAN__.document.toPlainText(),
   column: window.__MERIDIAN__.document.column,
@@ -493,7 +495,14 @@ const state = await page.evaluate(() => ({
   redMarks: window.__MERIDIAN__.document.marks.filter((mark) => mark.ink === 'red').length,
   marginBellDistance: window.__MERIDIAN__.document.bellDistance,
 }));
-if (!state.text.includes('Red ribbon test!') || state.redMarks !== 15) throw new Error(`Final state mismatch: ${JSON.stringify(state)}`);
+if (
+  !state.text.includes('Red ribbon test!')
+  || state.redMarks !== 15
+  || state.line !== 1
+  || state.column !== 16
+) {
+  throw new Error(`Final state mismatch: ${JSON.stringify(state)}`);
+}
 
 await openDocumentTray(page);
 const expectedExport = await page.evaluate(() => ({
@@ -543,7 +552,7 @@ if (
   throw new Error(`Export mismatch: ${JSON.stringify(exportState)}`);
 }
 
-await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 10000 });
+await settleKeyboardModel(page, []);
 await openDocumentTray(page);
 await page.click('#release-sheet');
 await page.waitForFunction(() => window.__MERIDIAN__.paperState.looseSheet && window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
@@ -590,7 +599,7 @@ if (newSheetState.sheetNumber !== 2 || newSheetState.marks !== 0 || newSheetStat
 }
 
 await page.keyboard.type('recover me', { delay: 12 });
-await page.waitForFunction(() => !window.__MERIDIAN__.model.busy);
+await settleKeyboardModel(page, []);
 await page.click('#release-sheet');
 await page.waitForFunction(() => window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 const crumpleBox = await page.locator('#crumple-sheet').boundingBox();
@@ -659,7 +668,7 @@ try {
   await waitForSimulator(reloadPage);
   await reloadPage.click('#enter-studio');
   await reloadPage.keyboard.type('reloadproof', { delay: 8 });
-  await reloadPage.waitForFunction(() => !window.__MERIDIAN__.model.busy);
+  await settleKeyboardModel(reloadPage, []);
   await openDocumentTray(reloadPage);
   await reloadPage.click('#release-sheet');
   await reloadPage.waitForFunction(
@@ -770,6 +779,7 @@ try {
     Storage.prototype.setItem = () => { throw new DOMException('Quota exhausted by test', 'QuotaExceededError'); };
   });
   await storageFailurePage.keyboard.type('z');
+  await settleKeyboardModel(storageFailurePage, []);
   await storageFailurePage.waitForFunction(
     () => document.getElementById('archive-warning')?.textContent.includes('LOCAL ARCHIVE IS FULL'),
     null,
@@ -810,7 +820,7 @@ for (const [label, quality, expectedQuality] of [
     await qualityPage.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
     await qualityPage.click('#enter-studio');
     await qualityPage.keyboard.type('q');
-    await qualityPage.waitForFunction(() => !window.__MERIDIAN__.model.busy);
+    await settleKeyboardModel(qualityPage, []);
     const qualityState = await qualityPage.evaluate(() => ({
       text: window.__MERIDIAN__.document.toPlainText(),
       ...window.__MERIDIAN__.room.getState(),
