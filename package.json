@@ -1,16 +1,23 @@
 {
   "name": "meridian-typewriter-simulator",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "test": "vitest run",
     "preview": "vite preview --host 127.0.0.1",
     "test:interaction": "node scripts/interaction-check.mjs",
+    "test:offline": "node scripts/direct-file-check.mjs",
+    "test:performance": "node scripts/performance-check.mjs",
     "test:visual": "node scripts/visual-check.mjs",
-    "verify": "npm test && npm run build"
+    "package:release": "node scripts/package-release.mjs",
+    "build:release": "npm run build && npm run package:release",
+    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:offline && npm run test:performance && npm run test:visual"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.2.6",

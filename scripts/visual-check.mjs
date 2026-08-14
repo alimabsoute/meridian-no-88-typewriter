@@ -1,72 +1,430 @@
-import { chromium } from 'playwright-core';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  DEFAULT_PREVIEW_URL,
+  ensurePreviewServer,
+  launchBrowser,
+  withQuality,
+} from './browser-test-helpers.mjs';
 
-const chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const configuredTargetUrl = process.env.TARGET_URL || withQuality(DEFAULT_PREVIEW_URL, 'low');
+const preview = await ensurePreviewServer({ targetUrl: configuredTargetUrl });
+const targetUrl = preview.targetUrl;
 const shotDir = path.resolve('visual-checks');
+const desktopViewport = { width: 1280, height: 800 };
+const screenshots = [];
+const assertions = {};
+const scenarioArgument = process.argv.find((value) => value.startsWith('--scenario='));
+const requestedScenario = scenarioArgument?.slice('--scenario='.length) || null;
+
 await mkdir(shotDir, { recursive: true });
 
-const browser = await chromium.launch({
-  executablePath: chrome,
-  headless: true,
-  args: ['--use-angle=d3d11', '--enable-webgl', '--ignore-gpu-blocklist'],
-});
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(90000);
-const consoleErrors = [];
-page.on('console', (message) => {
-  if (message.type() === 'error') consoleErrors.push(message.text());
-});
-page.on('pageerror', (error) => consoleErrors.push(error.stack || error.message));
-
-await page.goto('http://127.0.0.1:4177/?quality=low', { waitUntil: 'networkidle' });
-await page.waitForFunction(() => Boolean(window.__MERIDIAN__));
-await page.waitForTimeout(2200);
-
-await page.click('#enter-studio');
-await page.waitForTimeout(1400);
-
-await page.keyboard.type('The quick brown fox jumps over 13 lazy dogs!', { delay: 26 });
-await page.waitForFunction(() => window.__MERIDIAN__.document.toPlainText() === 'The quick brown fox jumps over 13 lazy dogs!', null, { timeout: 45000 });
-const firstLine = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
-if (firstLine !== 'The quick brown fox jumps over 13 lazy dogs!') {
-  throw new Error(`Unexpected first line: ${JSON.stringify(firstLine)}`);
+function invariant(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
-await page.keyboard.press('Enter');
-await page.waitForTimeout(1100);
-await page.click('[data-ink="red"]');
-await page.click('canvas');
-await page.keyboard.type('Red ribbon test?', { delay: 35 });
-await page.waitForFunction(() => window.__MERIDIAN__.document.column === 16, null, { timeout: 30000 });
-await page.keyboard.press('Backspace');
-await page.keyboard.type('!');
-await page.waitForFunction(() => window.__MERIDIAN__.document.marks.at(-1)?.character === '!', null, { timeout: 15000 });
-
-const state = await page.evaluate(() => ({
-  text: window.__MERIDIAN__.document.toPlainText(),
-  column: window.__MERIDIAN__.document.column,
-  line: window.__MERIDIAN__.document.line,
-  marks: window.__MERIDIAN__.document.marks.length,
-  redMarks: window.__MERIDIAN__.document.marks.filter((mark) => mark.ink === 'red').length,
-}));
-
-if (!state.text.includes('Red ribbon test!') || state.line !== 1 || state.column !== 16 || state.redMarks < 10) {
-  throw new Error(`Unexpected final state: ${JSON.stringify(state)}`);
+function assertBrowserClean(label, errors) {
+  if (errors.length) {
+    throw new Error(`${label} browser errors:\n${errors.join('\n')}`);
+  }
 }
 
-await page.screenshot({ path: path.join(shotDir, '03-typed-paper.png'), animations: 'disabled' });
-await page.click('#inspection-toggle');
-await page.waitForTimeout(1200);
-await page.screenshot({ path: path.join(shotDir, '04-inspection-view.png'), animations: 'disabled' });
+async function waitForSimulator(page, { enter = true } = {}) {
+  await page.goto(targetUrl, { waitUntil: 'networkidle' });
+  try {
+    await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
+  } catch (error) {
+    throw new Error(`Simulator did not initialize: ${error.message}`);
+  }
+  await page.evaluate(() => document.fonts?.ready);
+  await page.waitForTimeout(900);
 
-await page.click('#guide-open');
-await page.click('[data-tab="mechanics"]');
-const dialogVisible = await page.locator('#field-guide').evaluate((element) => element.open);
-if (!dialogVisible) throw new Error('Field guide did not open.');
-await page.screenshot({ path: path.join(shotDir, '05-field-guide.png'), animations: 'disabled' });
+  if (enter) {
+    await page.click('#enter-studio');
+    await page.waitForFunction(() => document.querySelector('#intro-overlay')?.classList.contains('dismissed'));
+    await page.waitForTimeout(900);
+  }
+}
 
-if (consoleErrors.length) throw new Error(`Browser console errors:\n${consoleErrors.join('\n')}`);
+async function openDocumentTray(page) {
+  const expanded = await page.locator('#document-toggle').getAttribute('aria-expanded');
+  if (expanded !== 'true') await page.click('#document-toggle');
+  await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
+}
 
-process.stdout.write(`${JSON.stringify({ ok: true, state, screenshots: shotDir }, null, 2)}\n`);
-await browser.close();
+async function typeAndSettle(page, lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index) await page.keyboard.press('Enter');
+    await page.keyboard.type(lines[index], { delay: 10 });
+  }
+  await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 30000 });
+}
+
+async function releaseCurrentSheet(page) {
+  await openDocumentTray(page);
+  await page.click('#release-sheet');
+  await page.waitForFunction(
+    () => Boolean(window.__MERIDIAN__.paperState.looseSheet)
+      && window.__MERIDIAN__.paperView.phase === 'inspecting',
+    null,
+    { timeout: 20000 },
+  );
+}
+
+async function holdToCrumple(page) {
+  const button = page.locator('#crumple-sheet');
+  const box = await button.boundingBox();
+  invariant(box, 'Crumple control has no visible bounds.');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(1050);
+  await page.mouse.up();
+  await page.waitForFunction(
+    () => window.__MERIDIAN__.paperState.discards.length === 1
+      && window.__MERIDIAN__.paperView.phase === 'idle',
+    null,
+    { timeout: 25000 },
+  );
+}
+
+async function captureScenario({
+  name,
+  filename,
+  enter = true,
+  viewport = desktopViewport,
+  isMobile = false,
+  hasTouch = false,
+  run,
+}) {
+  if (requestedScenario && requestedScenario !== name) return;
+  const context = await browser.newContext({ viewport, isMobile, hasTouch, deviceScaleFactor: 1 });
+  await context.addInitScript(() => {
+    // Each plate begins from a known document, room, and random seed.
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {
+      // Storage is not available in the initial about:blank document.
+    }
+    let seed = 0x4d455249;
+    Math.random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+  });
+
+  const page = await context.newPage();
+  page.setDefaultTimeout(90000);
+  const browserErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(`console: ${message.text()}`);
+  });
+  page.on('pageerror', (error) => browserErrors.push(`page: ${error.stack || error.message}`));
+
+  try {
+    await waitForSimulator(page, { enter });
+    const scenarioAssertions = await run(page);
+    await page.waitForTimeout(250);
+    assertBrowserClean(name, browserErrors);
+    const outputPath = path.join(shotDir, filename);
+    await page.screenshot({ path: outputPath, animations: 'disabled' });
+    assertBrowserClean(name, browserErrors);
+    screenshots.push(outputPath);
+    assertions[name] = scenarioAssertions;
+  } finally {
+    await context.close();
+  }
+}
+
+let browser;
+try {
+  browser = await launchBrowser();
+  await captureScenario({
+    name: 'intro',
+    filename: '01-intro.png',
+    enter: false,
+    run: async (page) => {
+      const state = await page.evaluate(() => ({
+        overlayHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden') === 'true',
+        buttonVisible: Boolean(document.querySelector('#enter-studio')?.getBoundingClientRect().height),
+        initialized: Boolean(window.__MERIDIAN__),
+      }));
+      invariant(state.initialized && !state.overlayHidden && state.buttonVisible, `Intro state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'writer-rest',
+    filename: '02-writer-rest.png',
+    run: async (page) => {
+      const state = await page.evaluate(() => ({
+        introDismissed: document.querySelector('#intro-overlay')?.classList.contains('dismissed'),
+        insertedSheet: window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber,
+        marks: window.__MERIDIAN__.document.marks.length,
+        busy: window.__MERIDIAN__.model.busy,
+        focused: document.activeElement?.id,
+      }));
+      invariant(
+        state.introDismissed && state.insertedSheet === 1 && state.marks === 0 && !state.busy && state.focused === 'scene',
+        `Writer-rest state mismatch: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'typed-paper',
+    filename: '03-typed-paper.png',
+    run: async (page) => {
+      const expected = 'Philadelphia, early evening.\nSnow settles beyond the glass.';
+      await typeAndSettle(page, ['Philadelphia, early evening.', 'Snow settles beyond the glass.']);
+      const state = await page.evaluate(() => ({
+        text: window.__MERIDIAN__.document.toPlainText(),
+        line: window.__MERIDIAN__.document.line,
+        marks: window.__MERIDIAN__.document.marks.length,
+      }));
+      invariant(state.text === expected && state.line === 1 && state.marks > 40, `Typed-paper state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'inspection',
+    filename: '04-inspection.png',
+    run: async (page) => {
+      await page.click('#inspection-toggle');
+      await page.waitForFunction(() => window.__MERIDIAN__.model.inspectionAmount > 0.95, null, { timeout: 10000 });
+      const state = await page.evaluate(() => ({
+        pressed: document.querySelector('#inspection-toggle')?.getAttribute('aria-pressed'),
+        target: window.__MERIDIAN__.model.inspectionTarget,
+        amount: window.__MERIDIAN__.model.inspectionAmount,
+        cursor: document.querySelector('#scene')?.style.cursor,
+      }));
+      invariant(state.pressed === 'true' && state.target === 1 && state.amount > 0.95 && state.cursor === 'grab', `Inspection state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'released-loose-paper',
+    filename: '05-released-loose-paper.png',
+    run: async (page) => {
+      await typeAndSettle(page, ['A loose page waits for a decision.']);
+      await releaseCurrentSheet(page);
+      const state = await page.evaluate(() => {
+        const mesh = window.__MERIDIAN__.paperView.activePage?.mesh;
+        let screenBounds = null;
+        if (mesh) {
+          mesh.geometry.computeBoundingBox();
+          const box = mesh.geometry.boundingBox;
+          const corners = [
+            box.min.clone(),
+            box.min.clone().set(box.max.x, box.min.y, box.min.z),
+            box.max.clone(),
+            box.max.clone().set(box.min.x, box.max.y, box.max.z),
+          ].map((point) => mesh.localToWorld(point).project(window.__MERIDIAN__.camera));
+          const xs = corners.map(({ x }) => (x + 1) * innerWidth * 0.5);
+          const ys = corners.map(({ y }) => (1 - y) * innerHeight * 0.5);
+          const center = mesh.getWorldPosition(mesh.position.clone()).project(window.__MERIDIAN__.camera);
+          screenBounds = {
+            left: Math.min(...xs),
+            top: Math.min(...ys),
+            right: Math.max(...xs),
+            bottom: Math.max(...ys),
+            centerX: (center.x + 1) * innerWidth * 0.5,
+            centerY: (1 - center.y) * innerHeight * 0.5,
+            meshPosition: mesh.position.toArray(),
+            meshScale: mesh.scale.toArray(),
+            cameraPosition: window.__MERIDIAN__.camera.position.toArray(),
+          };
+        }
+        return {
+          inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
+          loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
+          phase: window.__MERIDIAN__.paperView.phase,
+          machinePaperVisible: window.__MERIDIAN__.model.paperMesh.visible,
+          paperStatus: document.querySelector('#paper-status')?.textContent,
+          keepVisible: !document.querySelector('#keep-sheet')?.hidden,
+          crumpleVisible: !document.querySelector('#crumple-sheet')?.hidden,
+          screenBounds,
+        };
+      });
+      invariant(
+        !state.inserted && state.loose && state.phase === 'inspecting' && !state.machinePaperVisible
+          && state.paperStatus?.includes('LOOSE SHEET') && state.keepVisible && state.crumpleVisible
+          && state.screenBounds?.left > 300 && state.screenBounds.top >= 80
+          && state.screenBounds.right < 1100 && state.screenBounds.bottom <= 460,
+        `Released-sheet state mismatch: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'filed-manuscript',
+    filename: '06-filed-manuscript.png',
+    run: async (page) => {
+      await typeAndSettle(page, ['Filed beside the machine.']);
+      await releaseCurrentSheet(page);
+      await page.click('#keep-sheet');
+      await page.waitForFunction(
+        () => window.__MERIDIAN__.paperState.manuscript.length === 1
+          && window.__MERIDIAN__.paperView.phase === 'idle',
+        null,
+        { timeout: 20000 },
+      );
+      const state = await page.evaluate(() => ({
+        inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
+        loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
+        manuscript: window.__MERIDIAN__.paperState.manuscript.length,
+        visibleStackLayers: window.__MERIDIAN__.paperView.stackLayers.count,
+        paperStatus: document.querySelector('#paper-status')?.textContent,
+        loadVisible: !document.querySelector('#load-sheet')?.hidden,
+      }));
+      invariant(
+        !state.inserted && !state.loose && state.manuscript === 1 && state.visibleStackLayers === 1
+          && state.paperStatus === 'PAPER PATH EMPTY' && state.loadVisible,
+        `Filed-manuscript state mismatch: ${JSON.stringify(state)}`,
+      );
+      await page.click('#document-toggle');
+      await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
+      await page.waitForTimeout(450);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'discarded-crumpled-page',
+    filename: '07-discarded-crumpled-page.png',
+    run: async (page) => {
+      await typeAndSettle(page, ['This draft belongs in the basket.']);
+      await releaseCurrentSheet(page);
+      await holdToCrumple(page);
+      const state = await page.evaluate(() => ({
+        inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
+        loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
+        discards: window.__MERIDIAN__.paperState.discards.length,
+        discardVisuals: window.__MERIDIAN__.paperView.discardVisuals.size,
+        discardCountText: document.querySelector('#discard-count')?.textContent,
+        recoverVisible: !document.querySelector('#recover-sheet')?.hidden,
+      }));
+      invariant(
+        !state.inserted && !state.loose && state.discards === 1 && state.discardVisuals === 1
+          && state.discardCountText === '1' && state.recoverVisible,
+        `Discarded-page state mismatch: ${JSON.stringify(state)}`,
+      );
+      await page.click('#document-toggle');
+      await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
+      await page.waitForTimeout(450);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'rain',
+    filename: '08-rain.png',
+    run: async (page) => {
+      await page.selectOption('#weather-select', 'rain');
+      await page.waitForFunction(
+        () => window.__MERIDIAN__.room.getState().weather === 'rain'
+          && window.__MERIDIAN__.room.rain.visible
+          && window.__MERIDIAN__.room.rainMaterial.opacity > 0.2,
+        null,
+        { timeout: 10000 },
+      );
+      await page.waitForTimeout(700);
+      const state = await page.evaluate(() => ({
+        weather: window.__MERIDIAN__.room.getState().weather,
+        rainVisible: window.__MERIDIAN__.room.rain.visible,
+        rainOpacity: window.__MERIDIAN__.room.rainMaterial.opacity,
+        selected: document.querySelector('#weather-select')?.value,
+      }));
+      invariant(state.weather === 'rain' && state.rainVisible && state.rainOpacity > 0.2 && state.selected === 'rain', `Rain state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'snow',
+    filename: '09-snow.png',
+    run: async (page) => {
+      await page.selectOption('#weather-select', 'snow');
+      await page.waitForFunction(
+        () => window.__MERIDIAN__.room.getState().weather === 'snow'
+          && window.__MERIDIAN__.room.snow.visible
+          && window.__MERIDIAN__.room.snowPointsMaterial.opacity > 0.3,
+        null,
+        { timeout: 10000 },
+      );
+      await page.waitForTimeout(700);
+      const state = await page.evaluate(() => ({
+        weather: window.__MERIDIAN__.room.getState().weather,
+        snowVisible: window.__MERIDIAN__.room.snow.visible,
+        snowOpacity: window.__MERIDIAN__.room.snowPointsMaterial.opacity,
+        selected: document.querySelector('#weather-select')?.value,
+      }));
+      invariant(state.weather === 'snow' && state.snowVisible && state.snowOpacity > 0.3 && state.selected === 'snow', `Snow state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'field-guide',
+    filename: '10-field-guide.png',
+    run: async (page) => {
+      await page.click('#guide-open');
+      await page.click('[data-tab="mechanics"]');
+      const state = await page.evaluate(() => ({
+        open: document.querySelector('#field-guide')?.open,
+        activeTab: document.querySelector('.guide-tab.active')?.dataset.tab,
+        activePage: document.querySelector('.guide-page.active')?.dataset.page,
+      }));
+      invariant(state.open && state.activeTab === 'mechanics' && state.activePage === 'mechanics', `Field-guide state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'mobile',
+    filename: '11-mobile.png',
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    run: async (page) => {
+      await page.waitForFunction(() => {
+        const element = document.querySelector('#mobile-input');
+        return element && getComputedStyle(element).display !== 'none' && element.getBoundingClientRect().height > 0;
+      });
+      await page.focus('#mobile-input');
+      await page.evaluate(() => {
+        document.querySelector('#mobile-input').dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: 'Hi',
+        }));
+      });
+      await page.waitForFunction(() => !window.__MERIDIAN__.model.busy && window.__MERIDIAN__.document.marks.length === 2, null, { timeout: 15000 });
+      const state = await page.evaluate(() => ({
+        text: window.__MERIDIAN__.document.toPlainText(),
+        inputVisible: document.querySelector('#mobile-input')?.getBoundingClientRect().height > 0,
+        insertedSheet: window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber,
+      }));
+      invariant(state.text === 'Hi' && state.inputVisible && state.insertedSheet === 1, `Mobile state mismatch: ${JSON.stringify(state)}`);
+      return state;
+    },
+  });
+
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    targetUrl,
+    requestedScenario,
+    screenshotDirectory: shotDir,
+    screenshots,
+    assertions,
+  }, null, 2)}\n`);
+} finally {
+  await browser?.close().catch(() => {});
+  await preview.close();
+}

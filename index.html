@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0d0c" />
-    <meta name="description" content="A mechanically detailed, fully interactive 3D manual typewriter simulation." />
+    <meta name="description" content="A mechanically detailed 3D manual typewriter with physical paper rituals in a Philadelphia writing room." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23090d0c'/%3E%3Cpath d='M12 17h40v25H12zM8 42h48v9H8z' fill='%23d7b36e'/%3E%3Cpath d='M18 23h28v13H18z' fill='%23eee4ce'/%3E%3C/svg%3E" />
     <title>Meridian No. 88 — Mechanical Typewriter</title>
   </head>
@@ -79,12 +79,42 @@
         <button data-ink="stencil" class="ink-button stencil" aria-label="Stencil, no ink" aria-pressed="false" title="Stencil / no ink"></button>
       </section>
 
+      <section class="environment-card ui-layer" aria-label="Writing room atmosphere">
+        <div class="panel-heading"><span>PHILADELPHIA / EARLY EVENING</span><span class="weather-mark" aria-hidden="true">❄</span></div>
+        <div class="environment-fields">
+          <label><span>WEATHER</span>
+            <select id="weather-select">
+              <option value="quiet">Quiet</option>
+              <option value="rain">Rain</option>
+              <option value="snow">Snow</option>
+              <option value="nor-easter">Nor’easter</option>
+            </select>
+          </label>
+          <label><span>UNEASE</span>
+            <select id="unease-select">
+              <option value="off">Off</option>
+              <option value="subtle">Subtle</option>
+              <option value="unsettling">Unsettling</option>
+            </select>
+          </label>
+        </div>
+        <details class="audio-mix">
+          <summary>AUDIO MIX</summary>
+          <label><span>Machine</span><input id="machine-volume" type="range" min="0" max="1" step="0.01" /></label>
+          <label><span>Paper</span><input id="paper-volume" type="range" min="0" max="1" step="0.01" /></label>
+          <label><span>Room</span><input id="room-volume" type="range" min="0" max="1" step="0.01" /></label>
+          <label><span>Weather</span><input id="weather-volume" type="range" min="0" max="1" step="0.01" /></label>
+          <label><span>Unease</span><input id="unease-volume" type="range" min="0" max="1" step="0.01" /></label>
+        </details>
+      </section>
+
       <section class="document-tray ui-layer" aria-label="Document controls">
         <button class="tray-handle" id="document-toggle" aria-expanded="false">
           <span class="paper-stack-icon">▤</span>
           <span><b>DOCUMENT</b><small id="document-summary">Blank sheet loaded</small></span>
           <span class="tray-chevron">⌃</span>
         </button>
+        <div class="archive-warning" id="archive-warning" role="alert" hidden></div>
         <div class="tray-content" id="document-content" aria-hidden="true" inert>
           <div class="transcript-wrap">
             <span class="field-label">TYPECRIPT</span>
@@ -92,8 +122,23 @@
           </div>
           <div class="tray-actions">
             <button id="download-text">SAVE .TXT</button>
-            <button id="download-paper">SAVE PAPER</button>
-            <button id="new-sheet" class="danger-subtle">NEW SHEET</button>
+            <button id="download-paper">SAVE PAGE IMAGE</button>
+            <button id="release-sheet" class="paper-primary">RELEASE SHEET</button>
+          </div>
+          <div class="paper-fate" id="paper-fate">
+            <div class="paper-fate-status">
+              <span id="paper-status">SHEET INSERTED</span>
+              <small><b id="manuscript-count">0</b> KEPT · <b id="discard-count">0</b> DISCARDED</small>
+            </div>
+            <div class="fate-actions">
+              <button id="keep-sheet" hidden>FILE IN MANUSCRIPT</button>
+              <button id="crumple-sheet" class="hold-action" hidden><span>HOLD TO CRUMPLE</span><i aria-hidden="true"></i></button>
+              <button id="reinsert-sheet" hidden>REINSERT SHEET</button>
+              <button id="load-sheet" class="paper-primary" hidden>LOAD FRESH PAPER</button>
+              <button id="recover-sheet" hidden>RECOVER LAST DISCARD</button>
+              <button id="restore-manuscript" hidden>RESTORE LAST KEPT PAGE</button>
+              <button id="empty-wastebasket" class="danger-subtle" hidden>EMPTY WASTEBASKET</button>
+            </div>
           </div>
         </div>
       </section>
@@ -108,7 +153,7 @@
         <div><kbd>↵</kbd><span>RETURN + FEED</span></div>
         <div><kbd>⌫</kbd><span>BACK SPACE</span></div>
         <div><kbd>⇪</kbd><span>SHIFT LOCK</span></div>
-        <div class="mouse-legend"><span class="mouse-icon">◉</span><span>DRAG TO ORBIT · SCROLL TO DOLLY</span></div>
+        <div class="mouse-legend"><span class="mouse-icon">◉</span><span>INSPECTION MODE ENABLES A CONSTRAINED LEAN</span></div>
       </footer>
 
       <div class="margin-warning ui-layer" id="margin-warning" role="status" aria-live="polite">
@@ -123,9 +168,9 @@
         <div class="intro-content">
           <span class="intro-index">A MECHANICAL STUDY · 1938 / 2026</span>
           <h1 id="intro-title">Every letter<br /><em>leaves a mark.</em></h1>
-          <p>A working manual typewriter, reconstructed in three dimensions. Your keyboard drives its keys, typebars, ribbon, escapement, carriage, and paper.</p>
+          <p>An obsessively detailed mechanical writing instrument at a Philadelphia rowhouse desk. Your keyboard drives its keys, typebars, ribbon, escapement, carriage, ink, and paper.</p>
           <button class="enter-button" id="enter-studio" autofocus>
-            <span>ENTER THE WRITING ROOM</span><i>→</i>
+            <span>SIT AT THE MACHINE</span><i>→</i>
           </button>
           <small>Sound begins after entry · Headphones recommended</small>
         </div>
@@ -150,7 +195,9 @@
               <article><span class="manual-number">01</span><h3>Write</h3><p>Type on your physical keyboard or click the modeled keys. Shift selects the upper character; Caps Lock holds the type basket in its shifted position.</p></article>
               <article><span class="manual-number">02</span><h3>Return</h3><p>Press Enter to sweep the carriage to the left margin. The return lever indexes the platen one line and feeds the paper upward.</p></article>
               <article><span class="manual-number">03</span><h3>Correct</h3><p>Backspace reverses the escapement by one tooth. Like a real machine, it does not erase ink: type again to create an overstrike.</p></article>
-              <article><span class="manual-number">04</span><h3>Inspect</h3><p>Use the numbered views, orbit the camera, or enable Inspection Mode to open the shell and expose the universal bar, key links, escapement, and bell.</p></article>
+              <article><span class="manual-number">04</span><h3>Handle Paper</h3><p>Release a finished sheet, then file it in the visible manuscript tray, deliberately crumple it, or reinsert it. Discards remain recoverable until you empty the basket.</p></article>
+              <article><span class="manual-number">05</span><h3>Inspect</h3><p>Use the numbered views or enable Inspection Mode for a constrained close look at the universal bar, key links, escapement, and bell.</p></article>
+              <article><span class="manual-number">06</span><h3>Set the Room</h3><p>Choose quiet weather, rain, snow, or a nor’easter. Unease is optional, restrained, and never interrupts the act of writing.</p></article>
             </div>
           </div>
           <div class="guide-page" data-page="mechanics">
@@ -164,16 +211,17 @@
             </ol>
           </div>
           <div class="guide-page" data-page="research">
-            <p class="research-lede">The simulation is a fictional composite machine, but its action follows documented manual typewriter mechanisms.</p>
+            <p class="research-lede">The Meridian is a fictional composite whose action follows documented manual mechanisms. Its writing-room identity is informed by Philadelphia's active repair, restoration, and public typewriter culture.</p>
             <ul class="source-list">
               <li><a href="https://site.xavier.edu/polt/typewriters/IBMservice1939.pdf" target="_blank" rel="noreferrer"><span>01</span><b>1939 Mechanical Manual</b><small>Universal bar, type action, and escapement</small></a></li>
               <li><a href="https://patents.google.com/patent/US2212435A/en" target="_blank" rel="noreferrer"><span>02</span><b>Carriage Escapement Patent</b><small>Pawls, wheel, shift, and letter spacing</small></a></li>
               <li><a href="https://patents.google.com/patent/US1402264A/en" target="_blank" rel="noreferrer"><span>03</span><b>Ribbon Vibrator Patent</b><small>Universal bail and bichrome ribbon lift</small></a></li>
               <li><a href="https://patents.google.com/patent/US2021195A/en" target="_blank" rel="noreferrer"><span>04</span><b>Line Spacer Patent</b><small>Platen ratchet and carriage-return feed</small></a></li>
               <li><a href="https://site.xavier.edu/polt/typewriters/tw-faq.html" target="_blank" rel="noreferrer"><span>05</span><b>Ribbon Reference</b><small>Half-inch dual-color ribbons and automatic reverse eyelets</small></a></li>
+              <li><a href="https://www.phillytypewriter.com/community.html" target="_blank" rel="noreferrer"><span>06</span><b>Philadelphia Typewriter Community</b><small>Public machines, repair education, youth participation, and type-ins</small></a></li>
             </ul>
           </div>
-          <footer class="guide-footer"><span>SIMULATION BUILD 1.0</span><span>DESIGNED FOR PHYSICAL KEYBOARDS + POINTER</span></footer>
+          <footer class="guide-footer"><span>SIMULATION BUILD 0.2</span><span>DESIGNED FOR PHYSICAL KEYBOARDS + POINTER</span></footer>
         </form>
       </dialog>
     </main>

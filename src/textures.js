@@ -80,25 +80,32 @@ export function makeRectLabelTexture(label) {
 
 export function makeBadgeTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 256;
+  // One-line wordmark for the low front rail (13.25:1 display aspect).
+  // The former two-line 4:1 badge became stretched when the collision-prone
+  // tall apron was replaced by an authentic open keyboard bay.
+  canvas.width = 2120;
+  canvas.height = 160;
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.strokeStyle = '#c19a56';
-  context.lineWidth = 7;
-  context.strokeRect(15, 15, 994, 226);
+  context.lineWidth = 6;
+  context.strokeRect(10, 10, 2100, 140);
   context.strokeStyle = 'rgba(193,154,86,.45)';
   context.lineWidth = 2;
-  context.strokeRect(27, 27, 970, 202);
+  context.strokeRect(21, 21, 2078, 118);
   context.fillStyle = '#d5b16f';
-  context.textAlign = 'center';
+  context.textAlign = 'left';
   context.textBaseline = 'middle';
-  context.font = '128px "Bebas Neue", sans-serif';
-  context.letterSpacing = '12px';
-  context.fillText('MERIDIAN', 500, 129);
-  context.font = '42px "Special Elite", monospace';
+  context.font = '104px "Bebas Neue", sans-serif';
+  context.letterSpacing = '18px';
+  context.fillText('MERIDIAN', 70, 84);
+  context.fillStyle = 'rgba(193,154,86,.72)';
+  context.fillRect(1525, 38, 2, 84);
+  context.textAlign = 'center';
+  context.font = '46px "Special Elite", monospace';
+  context.letterSpacing = '5px';
   context.fillStyle = '#bca16f';
-  context.fillText('No. 88', 891, 188);
+  context.fillText('No. 88', 1815, 86);
   return canvasTexture(canvas);
 }
 
@@ -217,14 +224,42 @@ export class PaperRenderer {
     this.displayCanvas.height = this.displayHeight;
     this.displayContext = this.displayCanvas.getContext('2d');
     this.document = documentState;
+    this.textureReady = false;
+    this.uploadStats = {
+      fullUploads: 0,
+      partialUploads: 0,
+      fullBytes: 0,
+      partialBytes: 0,
+      lastRegion: null,
+    };
     this.drawPaper();
     this.syncDisplayPaper();
-    this.texture = canvasTexture(this.displayCanvas);
+    for (const mark of documentState.marks) this.drawImpression(mark, false);
+    this.texture = this.makeDisplayTexture();
     this.texture.generateMipmaps = false;
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
-    for (const mark of documentState.marks) this.drawImpression(mark, false);
-    this.texture.needsUpdate = true;
+  }
+
+  makeDisplayTexture() {
+    const image = this.displayContext.getImageData(0, 0, this.displayWidth, this.displayHeight);
+    this.textureData = new Uint8Array(image.data);
+    const texture = new THREE.DataTexture(
+      this.textureData,
+      this.displayWidth,
+      this.displayHeight,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+    texture.repeat.y = -1;
+    texture.offset.y = 1;
+    texture.onUpdate = () => { this.textureReady = true; };
+    texture.needsUpdate = true;
+    this.uploadStats.fullUploads += 1;
+    this.uploadStats.fullBytes += this.textureData.byteLength;
+    return texture;
   }
 
   drawPaper() {
@@ -271,6 +306,20 @@ export class PaperRenderer {
     };
   }
 
+  impressionBounds(mark, scale, width, height) {
+    const { x, y } = this.impressionCoordinates(mark, scale);
+    const left = Math.max(0, Math.floor(x - 21 * scale - 3));
+    const top = Math.max(0, Math.floor(y - 32 * scale - 3));
+    const right = Math.min(width, Math.ceil(x + 21 * scale + 3));
+    const bottom = Math.min(height, Math.ceil(y + 12 * scale + 3));
+    return {
+      x: left,
+      y: top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  }
+
   drawImpressionToContext(mark, context, scale = 1) {
     const { x, y } = this.impressionCoordinates(mark, scale);
     const random = seededRandom(mark.seed);
@@ -312,12 +361,45 @@ export class PaperRenderer {
       }
     }
     context.restore();
+    return this.impressionBounds(mark, scale, context.canvas.width, context.canvas.height);
+  }
+
+  updateDisplayTexture(region) {
+    if (!this.texture || !region.width || !region.height) return;
+    if (!this.textureReady) {
+      this.syncTextureFromDisplay();
+      return;
+    }
+
+    const pixels = this.displayContext.getImageData(region.x, region.y, region.width, region.height).data;
+    const rowComponents = region.width * 4;
+    for (let row = 0; row < region.height; row += 1) {
+      const sourceStart = row * rowComponents;
+      const targetStart = ((region.y + row) * this.displayWidth + region.x) * 4;
+      this.textureData.set(pixels.subarray(sourceStart, sourceStart + rowComponents), targetStart);
+      this.texture.addUpdateRange(targetStart, rowComponents);
+    }
+    this.texture.needsUpdate = true;
+    this.uploadStats.partialUploads += 1;
+    this.uploadStats.partialBytes += region.width * region.height * 4;
+    this.uploadStats.lastRegion = { ...region };
+  }
+
+  syncTextureFromDisplay() {
+    if (!this.texture) return;
+    const pixels = this.displayContext.getImageData(0, 0, this.displayWidth, this.displayHeight).data;
+    this.textureData.set(pixels);
+    this.texture.clearUpdateRanges();
+    this.texture.needsUpdate = true;
+    this.uploadStats.fullUploads += 1;
+    this.uploadStats.fullBytes += this.textureData.byteLength;
+    this.uploadStats.lastRegion = null;
   }
 
   drawImpression(mark, update = true) {
     this.drawImpressionToContext(mark, this.context, 1);
-    this.drawImpressionToContext(mark, this.displayContext, this.displayScale);
-    if (update) this.texture.needsUpdate = true;
+    const displayRegion = this.drawImpressionToContext(mark, this.displayContext, this.displayScale);
+    if (update) this.updateDisplayTexture(displayRegion);
   }
 
   redraw(documentState) {
@@ -325,7 +407,14 @@ export class PaperRenderer {
     this.drawPaper();
     this.syncDisplayPaper();
     for (const mark of documentState.marks) this.drawImpression(mark, false);
-    this.texture.needsUpdate = true;
+    this.syncTextureFromDisplay();
+  }
+
+  getUploadStats() {
+    return {
+      ...this.uploadStats,
+      fullTextureBytes: this.textureData?.byteLength ?? 0,
+    };
   }
 
   download(filename) {

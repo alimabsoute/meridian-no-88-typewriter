@@ -3,8 +3,11 @@ export class TypewriterAudio {
   constructor() {
     this.context = null;
     this.master = null;
+    this.paperMaster = null;
     this.room = null;
     this.enabled = true;
+    this.volume = 0.78;
+    this.paperVolume = 0.62;
     this.noiseBuffer = null;
   }
 
@@ -12,10 +15,17 @@ export class TypewriterAudio {
     if (!this.context) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return false;
-      this.context = new AudioContext();
+      try {
+        this.context = new AudioContext({ latencyHint: 'interactive' });
+      } catch {
+        this.context = new AudioContext();
+      }
       this.master = this.context.createGain();
-      this.master.gain.value = this.enabled ? 0.72 : 0;
+      this.paperMaster = this.context.createGain();
+      this.master.gain.value = this.enabled ? 0.72 * this.volume : 0;
+      this.paperMaster.gain.value = this.enabled ? 0.72 * this.paperVolume : 0;
       this.master.connect(this.context.destination);
+      this.paperMaster.connect(this.context.destination);
       this.noiseBuffer = this.makeNoiseBuffer(2);
     }
     if (this.context.state === 'suspended') await this.context.resume();
@@ -26,8 +36,32 @@ export class TypewriterAudio {
     this.enabled = enabled;
     if (this.master && this.context) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
-      this.master.gain.setTargetAtTime(enabled ? 0.72 : 0, this.context.currentTime, 0.025);
+      this.master.gain.setTargetAtTime(enabled ? 0.72 * this.volume : 0, this.context.currentTime, 0.025);
     }
+    if (this.paperMaster && this.context) {
+      this.paperMaster.gain.cancelScheduledValues(this.context.currentTime);
+      this.paperMaster.gain.setTargetAtTime(enabled ? 0.72 * this.paperVolume : 0, this.context.currentTime, 0.025);
+    }
+  }
+
+  setVolume(volume) {
+    const value = Number(volume);
+    if (Number.isFinite(value)) this.volume = Math.max(0, Math.min(1, value));
+    if (this.master && this.context) {
+      this.master.gain.cancelScheduledValues(this.context.currentTime);
+      this.master.gain.setTargetAtTime(this.enabled ? 0.72 * this.volume : 0, this.context.currentTime, 0.025);
+    }
+    return this.volume;
+  }
+
+  setPaperVolume(volume) {
+    const value = Number(volume);
+    if (Number.isFinite(value)) this.paperVolume = Math.max(0, Math.min(1, value));
+    if (this.paperMaster && this.context) {
+      this.paperMaster.gain.cancelScheduledValues(this.context.currentTime);
+      this.paperMaster.gain.setTargetAtTime(this.enabled ? 0.72 * this.paperVolume : 0, this.context.currentTime, 0.025);
+    }
+    return this.paperVolume;
   }
 
   makeNoiseBuffer(seconds) {
@@ -43,7 +77,7 @@ export class TypewriterAudio {
     return buffer;
   }
 
-  noise({ time = 0, duration = 0.04, gain = 0.16, frequency = 2200, q = 0.7, type = 'bandpass' } = {}) {
+  noise({ time = 0, duration = 0.04, gain = 0.16, frequency = 2200, q = 0.7, type = 'bandpass', destination = this.master } = {}) {
     if (!this.context || !this.enabled) return;
     const now = this.context.currentTime + time;
     const source = this.context.createBufferSource();
@@ -57,7 +91,7 @@ export class TypewriterAudio {
     envelope.gain.setValueAtTime(0.0001, now);
     envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), now + 0.002);
     envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    source.connect(filter).connect(envelope).connect(this.master);
+    source.connect(filter).connect(envelope).connect(destination || this.master);
     source.start(now, Math.random() * 0.7, duration + 0.015);
     source.stop(now + duration + 0.02);
   }
@@ -140,7 +174,14 @@ export class TypewriterAudio {
   }
 
   paper() {
-    this.noise({ duration: 0.22, gain: 0.05, frequency: 1150, q: 0.6, type: 'highpass' });
+    this.noise({
+      duration: 0.22,
+      gain: 0.05,
+      frequency: 1150,
+      q: 0.6,
+      type: 'highpass',
+      destination: this.paperMaster || this.master,
+    });
   }
 
   ribbonReverse() {

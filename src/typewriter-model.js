@@ -16,10 +16,46 @@ const TMP_B = new THREE.Vector3();
 const TMP_C = new THREE.Vector3();
 const TMP_Q = new THREE.Quaternion();
 const CYLINDER_GEOMETRY_CACHE = new Map();
+const MAX_COMMAND_STARTS_PER_FRAME = 12;
+const COMMAND_IMPACT_SECONDS = 0.055;
+const COMMAND_RELEASE_SECONDS = 0.088;
+const MECHANICAL_IMPACT_SLOT_SECONDS = 0.008;
+const TYPEBAR_SECONDARY_REACH_LIMIT = 0.8;
+const LATENCY_SAMPLE_LIMIT = 240;
+const STANDARD_KEY_TRAVEL = 0.095;
+const SPACE_KEY_TRAVEL = 0.11;
+const KEY_PRESS_ROTATION = 0.038;
+const CLEARANCE_INTERSECTION_EPSILON = 1e-5;
+const CLEARANCE_SWEEP_STEPS = 10;
+const NEIGHBOR_SWEEP_STEPS = 10;
+const DEFAULT_NEIGHBOR_KEY_PAIRS = [
+  ['Backquote', 'Digit1'],
+  ['Backquote', 'Tab'],
+  ['KeyQ', 'Tab'],
+  ['Equal', 'Backspace'],
+];
+
+function wallClockMilliseconds() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function summarizeDurations(samples, field) {
+  const values = samples
+    .map((sample) => sample[field])
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (!values.length) return { p50: 0, p95: 0, max: 0 };
+  const at = (percentile) => values[Math.min(values.length - 1, Math.floor((values.length - 1) * percentile))];
+  return {
+    p50: at(0.5),
+    p95: at(0.95),
+    max: values[values.length - 1],
+  };
+}
 
 export const CHARACTER_KEYS = [
   [
-    ['Digit1', '1', '!'], ['Digit2', '2', '@'], ['Digit3', '3', '#'], ['Digit4', '4', '$'],
+    ['Backquote', '`', '~'], ['Digit1', '1', '!'], ['Digit2', '2', '@'], ['Digit3', '3', '#'], ['Digit4', '4', '$'],
     ['Digit5', '5', '%'], ['Digit6', '6', '^'], ['Digit7', '7', '&'], ['Digit8', '8', '*'],
     ['Digit9', '9', '('], ['Digit0', '0', ')'], ['Minus', '-', '_'], ['Equal', '=', '+'],
   ],
@@ -71,7 +107,134 @@ function strikeReach(phase) {
 }
 
 function makeRounded(width, height, depth, radius = 0.08, segments = 3) {
-  return new RoundedBoxGeometry(width, height, depth, segments, radius);
+  const geometry = new RoundedBoxGeometry(width, height, depth, segments, radius);
+  geometry.userData.clearanceShape = {
+    type: 'rounded-box',
+    halfExtents: [width / 2, height / 2, depth / 2],
+    radius,
+  };
+  return geometry;
+}
+
+function signedDistanceToRoundedBox(point, shape) {
+  const [halfX, halfY, halfZ] = shape.halfExtents;
+  const radius = Math.max(0, Math.min(shape.radius, halfX, halfY, halfZ));
+  const qx = Math.abs(point.x) - (halfX - radius);
+  const qy = Math.abs(point.y) - (halfY - radius);
+  const qz = Math.abs(point.z) - (halfZ - radius);
+  const outside = Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0));
+  return outside + Math.min(Math.max(qx, qy, qz), 0) - radius;
+}
+
+function minimumGeometryDistanceToRoundedBox(geometry, geometryToBox, shape) {
+  const positions = geometry?.attributes?.position;
+  if (!positions) return Number.POSITIVE_INFINITY;
+
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  const geometryBounds = geometry.boundingBox.clone().applyMatrix4(geometryToBox);
+  const [halfX, halfY, halfZ] = shape.halfExtents;
+  const gapX = Math.max(-halfX - geometryBounds.max.x, geometryBounds.min.x - halfX, 0);
+  const gapY = Math.max(-halfY - geometryBounds.max.y, geometryBounds.min.y - halfY, 0);
+  const gapZ = Math.max(-halfZ - geometryBounds.max.z, geometryBounds.min.z - halfZ, 0);
+  const broadPhaseGap = Math.hypot(gapX, gapY, gapZ);
+  if (broadPhaseGap > 0) return broadPhaseGap;
+
+  const point = new THREE.Vector3();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  let minimum = Number.POSITIVE_INFINITY;
+  const inspectPoint = (candidate) => {
+    candidate.applyMatrix4(geometryToBox);
+    minimum = Math.min(minimum, signedDistanceToRoundedBox(candidate, shape));
+  };
+
+  for (let index = 0; index < positions.count; index += 1) {
+    point.fromBufferAttribute(positions, index);
+    inspectPoint(point);
+  }
+
+  // Triangle centroids catch a thin shell crossing a rendered face between
+  // coarse vertices while remaining deterministic and renderer-independent.
+  const indices = geometry.index;
+  const triangleCount = indices ? indices.count / 3 : positions.count / 3;
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    const offset = triangle * 3;
+    const indexA = indices ? indices.getX(offset) : offset;
+    const indexB = indices ? indices.getX(offset + 1) : offset + 1;
+    const indexC = indices ? indices.getX(offset + 2) : offset + 2;
+    a.fromBufferAttribute(positions, indexA);
+    b.fromBufferAttribute(positions, indexB);
+    c.fromBufferAttribute(positions, indexC);
+    point.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+    inspectPoint(point);
+  }
+  return minimum;
+}
+
+function keyTopObjects(key) {
+  return key.ring ? [key.ring, key.cap, key.labelDisc].filter(Boolean) : [key.base].filter(Boolean);
+}
+
+function hypotheticalKeyObjectMatrix(key, object, depressionAmount) {
+  const travel = key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL;
+  const groupPosition = new THREE.Vector3(
+    key.group.position.x,
+    key.baseY - depressionAmount * travel,
+    key.group.position.z,
+  );
+  const groupRotation = new THREE.Euler(
+    key.baseRotationX - depressionAmount * KEY_PRESS_ROTATION,
+    key.group.rotation.y,
+    key.group.rotation.z,
+    key.group.rotation.order,
+  );
+  const groupMatrix = new THREE.Matrix4().compose(
+    groupPosition,
+    new THREE.Quaternion().setFromEuler(groupRotation),
+    key.group.scale,
+  );
+  object.updateMatrix();
+  return groupMatrix.multiply(object.matrix);
+}
+
+function transformedGeometryBounds(geometry, matrix) {
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  return geometry.boundingBox.clone().applyMatrix4(matrix);
+}
+
+function signedDistanceBetweenBoxes(first, second) {
+  const gapX = Math.max(first.min.x - second.max.x, second.min.x - first.max.x, 0);
+  const gapY = Math.max(first.min.y - second.max.y, second.min.y - first.max.y, 0);
+  const gapZ = Math.max(first.min.z - second.max.z, second.min.z - first.max.z, 0);
+  if (gapX || gapY || gapZ) return Math.hypot(gapX, gapY, gapZ);
+
+  const overlapX = Math.min(first.max.x, second.max.x) - Math.max(first.min.x, second.min.x);
+  const overlapY = Math.min(first.max.y, second.max.y) - Math.max(first.min.y, second.min.y);
+  const overlapZ = Math.min(first.max.z, second.max.z) - Math.max(first.min.z, second.min.z);
+  return -Math.min(overlapX, overlapY, overlapZ);
+}
+
+function minimumKeyTopBoundsClearance(first, second, firstDepression, secondDepression) {
+  let minimumClearance = Number.POSITIVE_INFINITY;
+  let closest = null;
+  for (const firstObject of keyTopObjects(first)) {
+    const firstMatrix = hypotheticalKeyObjectMatrix(first, firstObject, firstDepression);
+    const firstBounds = transformedGeometryBounds(firstObject.geometry, firstMatrix);
+    for (const secondObject of keyTopObjects(second)) {
+      const secondMatrix = hypotheticalKeyObjectMatrix(second, secondObject, secondDepression);
+      const secondBounds = transformedGeometryBounds(secondObject.geometry, secondMatrix);
+      const clearance = signedDistanceBetweenBoxes(firstBounds, secondBounds);
+      if (clearance < minimumClearance) {
+        minimumClearance = clearance;
+        closest = {
+          firstObject: firstObject.name || firstObject.type,
+          secondObject: secondObject.name || secondObject.type,
+        };
+      }
+    }
+  }
+  return { clearance: minimumClearance, closest };
 }
 
 function cylinderBetween(start, end, radius, material, radialSegments = 10) {
@@ -181,11 +344,18 @@ export class TypewriterModel {
     this.root.add(this.machine);
 
     this.keys = new Map();
+    this.activeKeys = new Set();
     this.clickTargets = [];
     this.typebars = new Map();
     this.activeStrikes = [];
     this.commandQueue = [];
-    this.commandCooldown = 0;
+    this.commandSequence = 0;
+    this.commandBurstLimit = MAX_COMMAND_STARTS_PER_FRAME;
+    this.commandClock = wallClockMilliseconds;
+    this.strikeTimelineSeconds = 0;
+    this.nextMechanicalImpactAt = 0;
+    this.latencySamples = [];
+    this.latencyPeakQueueDepth = 0;
     this.specialAnimations = [];
     this.shellMeshes = [];
     this.inspectionTarget = 0;
@@ -275,21 +445,6 @@ export class TypewriterModel {
     blotter.position.set(0, 0.115, 0.5);
     this.root.add(blotter);
 
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(32, 18), this.materials.wall);
-    wall.position.set(0, 7.5, -7.2);
-    this.root.add(wall);
-
-    const paperStack = new THREE.Group();
-    paperStack.name = 'SparePaper';
-    for (let i = 0; i < 8; i += 1) {
-      const sheet = shadow(new THREE.Mesh(makeRounded(3.15, 0.015, 4.05, 0.025, 2), this.materials.paperEdge), false, true);
-      sheet.position.set((i % 3 - 1) * 0.012, i * 0.018, (i % 2) * 0.009);
-      sheet.rotation.y = -0.13 + (i % 4) * 0.006;
-      paperStack.add(sheet);
-    }
-    paperStack.position.set(5.55, 0.14, 1.2);
-    this.root.add(paperStack);
-
     const lamp = new THREE.Group();
     lamp.name = 'DeskLamp';
     const base = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.73, 0.88, 0.18, 48), this.materials.agedBrass));
@@ -343,22 +498,32 @@ export class TypewriterModel {
     mesh.material = mesh.material.clone();
     mesh.material.transparent = true;
     mesh.material.userData.baseOpacity = mesh.material.opacity;
+    mesh.updateMatrix();
+    mesh.userData.clearanceRestMatrix = mesh.matrix.clone();
     this.shellMeshes.push(mesh);
     this.machine.add(mesh);
     return mesh;
   }
 
   buildBody() {
-    const base = new THREE.Mesh(makeRounded(8.9, 0.54, 6.35, 0.22, 5), this.materials.enamel);
-    base.name = 'CastBase';
-    base.position.set(0, 0.4, 0.48);
-    this.addShell(base);
+    // The keyboard sits in an open cast-metal bay. Earlier builds used one tall
+    // solid skirt here, which physically swallowed three key rows. These shell
+    // dimensions are clearance-checked against every key at rest and at full
+    // 0.095-unit travel, including the wider special keys and space bar.
+    const basePan = new THREE.Mesh(makeRounded(8.9, 0.16, 6.1, 0.07, 5), this.materials.enamel);
+    basePan.name = 'CastBase';
+    basePan.position.set(0, 0.21, 0.35);
+    this.addShell(basePan);
 
-    const frontSkirt = new THREE.Mesh(makeRounded(8.45, 1.08, 1.26, 0.19, 4), this.materials.enamel);
-    frontSkirt.name = 'FrontSkirt';
-    frontSkirt.position.set(0, 0.82, 2.66);
-    frontSkirt.rotation.x = -0.12;
-    this.addShell(frontSkirt);
+    const rearBase = new THREE.Mesh(makeRounded(8.9, 0.46, 3.0, 0.2, 5), this.materials.enamel);
+    rearBase.name = 'RearCastBase';
+    rearBase.position.set(0, 0.36, -1.2);
+    this.addShell(rearBase);
+
+    const frontRail = new THREE.Mesh(makeRounded(8.45, 0.24, 0.3, 0.08, 4), this.materials.enamel);
+    frontRail.name = 'OpenKeyboardFrontRail';
+    frontRail.position.set(0, 0.43, 3.25);
+    this.addShell(frontRail);
 
     const rearHousing = new THREE.Mesh(makeRounded(8.22, 1.72, 2.34, 0.24, 5), this.materials.enamel);
     rearHousing.name = 'RearMechanismCover';
@@ -373,16 +538,22 @@ export class TypewriterModel {
     this.topCover = this.addShell(topCover);
 
     for (const side of [-1, 1]) {
-      const cheek = new THREE.Mesh(makeRounded(0.48, 1.08, 3.6, 0.16, 4), this.materials.enamel);
-      cheek.position.set(side * 4.1, 1.03, 0.58);
+      const cheek = new THREE.Mesh(makeRounded(0.48, 1.08, 1.9, 0.16, 4), this.materials.enamel);
+      cheek.name = side < 0 ? 'RearCheekLeft' : 'RearCheekRight';
+      cheek.position.set(side * 4.1, 1.03, -0.27);
       cheek.rotation.z = side * 0.025;
       this.addShell(cheek);
 
-      const trim = new THREE.Mesh(makeRounded(0.085, 0.16, 3.15, 0.035, 2), this.materials.chrome);
-      trim.position.set(side * 4.35, 0.72, 0.55);
+      const sideSill = new THREE.Mesh(makeRounded(0.48, 0.28, 2.7, 0.1, 4), this.materials.enamel);
+      sideSill.name = side < 0 ? 'KeyboardSillLeft' : 'KeyboardSillRight';
+      sideSill.position.set(side * 4.1, 0.41, 2.04);
+      this.addShell(sideSill);
+
+      const trim = new THREE.Mesh(makeRounded(0.085, 0.12, 1.76, 0.035, 2), this.materials.chrome);
+      trim.position.set(side * 4.35, 0.74, -0.2);
       this.machine.add(trim);
 
-      for (let z = -0.6; z <= 1.7; z += 0.42) {
+      for (let z = -0.62; z <= 0.58; z += 0.4) {
         const vent = new THREE.Mesh(makeRounded(0.04, 0.05, 0.23, 0.02, 2), this.materials.darkSteel);
         vent.position.set(side * 4.36, 1.14, z);
         this.machine.add(vent);
@@ -390,12 +561,11 @@ export class TypewriterModel {
     }
 
     const badge = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.0, 0.74),
+      new THREE.PlaneGeometry(2.65, 0.2),
       new THREE.MeshBasicMaterial({ map: makeBadgeTexture(), transparent: true, toneMapped: false }),
     );
     badge.name = 'MeridianBadge';
-    badge.position.set(0, 0.87, 3.312);
-    badge.rotation.x = -0.12;
+    badge.position.set(0, 0.43, 3.405);
     this.machine.add(badge);
 
     const serialPlate = new THREE.Mesh(makeRounded(1.1, 0.025, 0.34, 0.03, 2), this.materials.agedBrass);
@@ -410,13 +580,13 @@ export class TypewriterModel {
       }
     }
 
-    for (const x of [-3.75, -1.25, 1.25, 3.75]) {
+    for (const x of [-3.82, 3.82]) {
       const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.035, 20), this.materials.chrome);
-      screw.position.set(x, 0.69, 3.23);
+      screw.position.set(x, 0.43, 3.41);
       screw.rotation.x = Math.PI / 2;
       this.machine.add(screw);
       const slot = new THREE.Mesh(new THREE.BoxGeometry(0.078, 0.012, 0.015), this.materials.darkSteel);
-      slot.position.set(x, 0.69, 3.255);
+      slot.position.set(x, 0.43, 3.432);
       this.machine.add(slot);
     }
   }
@@ -884,6 +1054,10 @@ export class TypewriterModel {
     const rowZ = [1.2, 1.84, 2.47, 3.08];
     const rowY = [1.14, 1.02, 0.9, 0.78];
     const spacing = 0.58;
+    // Add the complete US-QWERTY number row without pushing Equal into the
+    // Backspace key. A half-pitch left offset keeps Digit1 through Equal at
+    // their established restored positions and places Backquote at far left.
+    const rowXOffset = [-spacing / 2, 0, 0, 0];
     this.roundKeyGeometry = {
       stem: new THREE.CylinderGeometry(0.055, 0.06, 0.35, 12),
       ring: new THREE.TorusGeometry(0.237, 0.028, 10, 32),
@@ -893,7 +1067,7 @@ export class TypewriterModel {
 
     CHARACTER_KEYS.forEach((row, rowIndex) => {
       row.forEach(([code, lower, upper], keyIndex) => {
-        const x = (keyIndex - (row.length - 1) / 2) * spacing;
+        const x = (keyIndex - (row.length - 1) / 2) * spacing + rowXOffset[rowIndex];
         const z = rowZ[rowIndex];
         const y = rowY[rowIndex];
         const primary = /^[a-z]$/i.test(lower) ? upper : lower;
@@ -902,8 +1076,8 @@ export class TypewriterModel {
       });
     });
 
-    this.makeSpecialKey({ code: 'Tab', label: 'TAB', x: -4.0, y: 1.02, z: 1.84, width: 0.7, action: 'tab' });
-    this.makeSpecialKey({ code: 'Backspace', label: 'BACK', x: 3.83, y: 1.14, z: 1.2, width: 0.82, action: 'backspace' });
+    this.makeSpecialKey({ code: 'Tab', label: 'TAB', x: -4.08, y: 1.02, z: 1.84, width: 0.6, action: 'tab' });
+    this.makeSpecialKey({ code: 'Backspace', label: 'BACK', x: 3.91, y: 1.14, z: 1.2, width: 0.82, action: 'backspace' });
     this.makeSpecialKey({ code: 'CapsLock', label: 'LOCK', x: -3.62, y: 0.9, z: 2.47, width: 0.82, action: 'caps' });
     this.makeSpecialKey({ code: 'ShiftLeft', label: 'SHIFT', x: -3.63, y: 0.76, z: 3.08, width: 1.05, action: 'shift' });
     this.makeSpecialKey({ code: 'ShiftRight', label: 'SHIFT', x: 3.63, y: 0.76, z: 3.08, width: 1.05, action: 'shift' });
@@ -944,8 +1118,8 @@ export class TypewriterModel {
     this.machine.add(link);
 
     const record = {
-      code, lower, upper, group, cap, lever, link, leverStart, leverEnd, linkEndBase, typebar,
-      baseY: y, depression: 0, phase: -1,
+      code, lower, upper, group, cap, ring, labelDisc, lever, link, leverStart, leverEnd, linkEndBase, typebar,
+      baseY: y, baseRotationX: -0.09, depression: 0, phase: -1,
       action: 'character',
     };
     group.userData.keyRecord = record;
@@ -986,7 +1160,7 @@ export class TypewriterModel {
     }
     this.machine.add(group);
 
-    const record = { code, group, base, baseY: y, depression: 0, phase: -1, action, lower: '', upper: '' };
+    const record = { code, group, base, baseY: y, baseRotationX: -0.09, depression: 0, phase: -1, action, lower: '', upper: '' };
     group.userData.keyRecord = record;
     base.userData.keyRecord = record;
     this.keys.set(code, record);
@@ -1051,26 +1225,89 @@ export class TypewriterModel {
     }
   }
 
+  createCommand(properties) {
+    return {
+      ...properties,
+      sequence: this.commandSequence += 1,
+      queuedAt: this.commandClock(),
+    };
+  }
+
+  enqueueCommand(command, immediateFeedback) {
+    immediateFeedback?.();
+    command.feedbackAt = this.commandClock();
+    this.commandQueue.push(command);
+    this.latencyPeakQueueDepth = Math.max(this.latencyPeakQueueDepth, this.commandQueue.length);
+    return command;
+  }
+
   queueCharacter(character, code, force = this.touchForce) {
     if (!KEY_BY_CODE.has(code)) return false;
-    this.commandQueue.push({ type: 'character', character, code, force, duration: 0.155 });
+    const command = this.createCommand({ type: 'character', character, code, force, duration: 0.135 });
+    this.enqueueCommand(command, () => {
+      this.animateKey(code, 0.12);
+      this.audio.keyDown(force);
+    });
     return true;
   }
 
   queueSpace() {
-    this.commandQueue.push({ type: 'space', code: 'Space', force: 0.7, duration: 0.13 });
+    const command = this.createCommand({ type: 'space', code: 'Space', force: 0.7, duration: 0.115 });
+    this.enqueueCommand(command, () => {
+      this.animateKey('Space', 0.105);
+      this.audio.space();
+    });
   }
 
   queueBackspace() {
-    this.commandQueue.push({ type: 'backspace', code: 'Backspace', duration: 0.13 });
+    const command = this.createCommand({ type: 'backspace', code: 'Backspace', duration: 0.115 });
+    this.enqueueCommand(command, () => {
+      this.animateKey('Backspace', 0.105);
+      this.audio.backspace();
+    });
   }
 
   queueReturn() {
-    this.commandQueue.push({ type: 'return', code: 'Enter' });
+    this.enqueueCommand(this.createCommand({ type: 'return', code: 'Enter' }));
   }
 
   queueTab() {
-    this.commandQueue.push({ type: 'tab', code: 'Tab' });
+    this.enqueueCommand(this.createCommand({ type: 'tab', code: 'Tab' }));
+  }
+
+  resetLatencyMetrics() {
+    this.latencySamples.length = 0;
+    this.latencyPeakQueueDepth = this.commandQueue.length;
+  }
+
+  getLatencySnapshot() {
+    const samples = this.latencySamples.slice();
+    return {
+      sampleCount: samples.length,
+      currentQueueDepth: this.commandQueue.length,
+      peakQueueDepth: this.latencyPeakQueueDepth,
+      feedbackMs: summarizeDurations(samples, 'feedbackMs'),
+      startMs: summarizeDurations(samples, 'startMs'),
+      impactMs: summarizeDurations(samples, 'impactMs'),
+      releaseMs: summarizeDurations(samples, 'releaseMs'),
+      completeMs: summarizeDurations(samples, 'completeMs'),
+    };
+  }
+
+  recordLatencySample(command) {
+    if (!Number.isFinite(command.queuedAt) || !Number.isFinite(command.completedAt)) return;
+    this.latencySamples.push({
+      type: command.type,
+      sequence: command.sequence,
+      feedbackMs: command.feedbackAt - command.queuedAt,
+      startMs: command.startedAt - command.queuedAt,
+      impactMs: command.impactedAt - command.queuedAt,
+      releaseMs: command.releasedAt - command.queuedAt,
+      completeMs: command.completedAt - command.queuedAt,
+    });
+    if (this.latencySamples.length > LATENCY_SAMPLE_LIMIT) {
+      this.latencySamples.splice(0, this.latencySamples.length - LATENCY_SAMPLE_LIMIT);
+    }
   }
 
   triggerMarginRelease() {
@@ -1114,7 +1351,7 @@ export class TypewriterModel {
     this.onStatus({ type: 'inspection', active: enabled });
   }
 
-  setDocument(documentState, paperRenderer) {
+  setDocument(documentState, paperRenderer, { animateLoad = true } = {}) {
     const previousTexture = this.materials.paper.map;
     this.document = documentState;
     this.paperRenderer = paperRenderer;
@@ -1122,6 +1359,11 @@ export class TypewriterModel {
     this.materials.paper.needsUpdate = true;
     if (previousTexture && previousTexture !== paperRenderer.texture) previousTexture.dispose();
     this.applyDocumentState(true);
+    if (!animateLoad) {
+      this.paperLoading = null;
+      this.deformPaper(true);
+      return;
+    }
     const targetPaperY = this.paperY;
     const targetPlaten = this.platenRotation;
     this.paperY = targetPaperY - 1.05;
@@ -1195,54 +1437,59 @@ export class TypewriterModel {
     if (!key) return;
     key.phase = 0;
     key.duration = duration;
+    this.activeKeys.add(key);
   }
 
   startCommand(command) {
-    if (this.paperLoading) {
-      this.commandQueue.unshift(command);
-      return false;
-    }
+    if (this.paperLoading) return false;
     if (command.type === 'return') {
-      if (this.activeStrikes.length || this.returning || this.tabMotion) {
-        this.commandQueue.unshift(command);
-        return false;
-      }
+      if (this.activeStrikes.length || this.returning || this.tabMotion) return false;
       this.startReturn();
       return true;
     }
     if (command.type === 'tab') {
-      if (this.activeStrikes.length || this.returning || this.tabMotion) {
-        this.commandQueue.unshift(command);
-        return false;
-      }
+      if (this.activeStrikes.length || this.returning || this.tabMotion) return false;
       this.startTab();
       return true;
     }
-    if (this.returning || this.tabMotion) {
-      this.commandQueue.unshift(command);
-      return false;
-    }
+    if (this.returning || this.tabMotion) return false;
 
     command.phase = 0;
+    command.elapsed = 0;
     command.impacted = false;
     command.released = false;
+    command.startedAt = this.commandClock();
+    const timeline = this.strikeTimelineSeconds ?? 0;
+    const earliestImpact = timeline + COMMAND_IMPACT_SECONDS;
+    command.mechanicalImpactAt = Math.max(earliestImpact, this.nextMechanicalImpactAt ?? 0);
+    command.mechanicalDelay = command.mechanicalImpactAt - earliestImpact;
+    command.mechanicalReleaseAt = command.mechanicalImpactAt + (COMMAND_RELEASE_SECONDS - COMMAND_IMPACT_SECONDS);
+    this.nextMechanicalImpactAt = command.mechanicalImpactAt + MECHANICAL_IMPACT_SLOT_SECONDS;
     command.blocked = this.document.atMargin && !this.marginReleased && command.type !== 'backspace';
-    this.animateKey(command.code, command.blocked ? 0.11 : command.duration);
     if (command.type === 'character') {
       command.typebar = this.typebars.get(command.code);
-      this.audio.keyDown(command.force);
-    } else if (command.type === 'space') {
-      this.audio.space();
-    } else if (command.type === 'backspace') {
-      this.audio.backspace();
     }
     this.activeStrikes.push(command);
-    this.commandCooldown = command.blocked ? 0.07 : 0.075;
     return true;
+  }
+
+  startQueuedCommands() {
+    let started = 0;
+    while (this.commandQueue.length && started < this.commandBurstLimit) {
+      const command = this.commandQueue.shift();
+      if (!this.startCommand(command)) {
+        this.commandQueue.unshift(command);
+        break;
+      }
+      started += 1;
+      if (command.type === 'return' || command.type === 'tab') break;
+    }
+    return started;
   }
 
   impactCommand(command) {
     command.impacted = true;
+    command.impactedAt = this.commandClock();
     if (command.blocked) {
       this.onStatus({ type: 'margin-lock' });
       return;
@@ -1281,6 +1528,7 @@ export class TypewriterModel {
   releaseCommand(command) {
     if (command.released || command.blocked || !command.impacted) return;
     command.released = true;
+    command.releasedAt = this.commandClock();
     if ((command.type === 'character' || command.type === 'space') && command.advanceResult) {
       this.audio.escapement();
       this.afterAdvance(command.advanceResult);
@@ -1365,16 +1613,12 @@ export class TypewriterModel {
   update(delta) {
     const dt = Math.min(0.04, delta);
     this.lastDelta = dt;
-    this.commandCooldown -= dt;
     if (this.marginReleaseTimer > 0) {
       this.marginReleaseTimer -= dt;
       if (this.marginReleaseTimer <= 0) this.marginReleased = false;
     }
 
-    if (this.commandQueue.length && this.commandCooldown <= 0) {
-      const command = this.commandQueue.shift();
-      this.startCommand(command);
-    }
+    this.startQueuedCommands();
 
     this.updateKeys(dt);
     this.updateStrikes(dt);
@@ -1385,7 +1629,7 @@ export class TypewriterModel {
   }
 
   updateKeys(dt) {
-    for (const key of this.keys.values()) {
+    for (const key of this.activeKeys) {
       let amount = 0;
       if (key.phase >= 0) {
         key.phase += dt / (key.duration || 0.15);
@@ -1395,7 +1639,8 @@ export class TypewriterModel {
       if ((key.code === 'ShiftLeft' || key.code === 'ShiftRight') && this.shiftHeldCodes.has(key.code)) amount = Math.max(amount, 0.72);
       if (key.code === 'CapsLock' && this.shiftLocked) amount = Math.max(amount, 0.54);
       key.depression = damp(key.depression, amount, 30, dt);
-      key.group.position.y = key.baseY - key.depression * (key.action === 'space' ? 0.11 : 0.095);
+      key.group.position.y = key.baseY - key.depression * (key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL);
+      key.group.rotation.x = key.baseRotationX - key.depression * KEY_PRESS_ROTATION;
       if (key.lever) {
         TMP_A.copy(key.leverStart);
         TMP_A.y -= key.depression * 0.095;
@@ -1408,36 +1653,67 @@ export class TypewriterModel {
         TMP_C.z -= (key.typebar?.amount ?? 0) * 0.12;
         placeCylinder(key.link, TMP_B, TMP_C);
       }
+      const held = (key.code === 'ShiftLeft' || key.code === 'ShiftRight') && this.shiftHeldCodes.has(key.code);
+      const locked = key.code === 'CapsLock' && this.shiftLocked;
+      if (key.phase < 0 && !held && !locked && key.depression < 0.002) {
+        key.depression = 0;
+        key.group.position.y = key.baseY;
+        this.activeKeys.delete(key);
+      }
     }
   }
 
   updateStrikes(dt) {
+    this.strikeTimelineSeconds = (this.strikeTimelineSeconds ?? 0) + dt;
+    const timeline = this.strikeTimelineSeconds;
     let maximumReach = 0;
     let escapementCycle = 0;
     const completed = [];
-    for (let i = 0; i < this.activeStrikes.length; i += 1) {
-      const command = this.activeStrikes[i];
-      command.phase += dt / command.duration;
+    const typebarReach = new Map();
+    const states = this.activeStrikes.map((command) => {
+      command.elapsed += dt;
+      const motionElapsed = Math.max(0, command.elapsed - (command.mechanicalDelay ?? 0));
+      command.phase = motionElapsed / command.duration;
       const phase = clamp01(command.phase);
-      const reach = command.blocked ? 0 : strikeReach(phase);
+      const rawReach = command.blocked ? 0 : strikeReach(phase);
+      return { command, motionElapsed, phase, rawReach };
+    });
+
+    let finalReachOwner = null;
+    let ownerDistance = Number.POSITIVE_INFINITY;
+    for (const state of states) {
+      if (!state.command.typebar || state.rawReach <= 0.82) continue;
+      const distance = Math.abs(timeline - state.command.mechanicalImpactAt);
+      if (distance < ownerDistance || (distance === ownerDistance && (!finalReachOwner || state.command.sequence < finalReachOwner.command.sequence))) {
+        finalReachOwner = state;
+        ownerDistance = distance;
+      }
+    }
+
+    for (const state of states) {
+      const { command, phase, rawReach } = state;
+      const reach = command.typebar && rawReach > 0.82 && state !== finalReachOwner
+        ? TYPEBAR_SECONDARY_REACH_LIMIT
+        : rawReach;
       maximumReach = Math.max(maximumReach, reach);
       if (!command.blocked && (command.type === 'character' || command.type === 'space')) {
         escapementCycle = Math.max(escapementCycle, phase);
       }
       if (command.typebar) {
-        command.typebar.amount = reach;
-        this.positionTypebar(command.typebar, reach);
+        typebarReach.set(command.typebar, Math.max(typebarReach.get(command.typebar) ?? 0, reach));
       }
-      if (!command.impacted && phase >= (command.type === 'character' ? 0.42 : 0.3)) this.impactCommand(command);
-      if (!command.released && phase >= (command.type === 'character' ? 0.62 : 0.56)) this.releaseCommand(command);
+      if (!command.impacted && timeline >= command.mechanicalImpactAt) this.impactCommand(command);
+      if (!command.released && timeline >= command.mechanicalReleaseAt) this.releaseCommand(command);
       if (phase >= 1) {
         this.releaseCommand(command);
-        if (command.typebar) {
-          command.typebar.amount = 0;
-          this.positionTypebar(command.typebar, 0);
-        }
+        command.completedAt = this.commandClock();
+        this.recordLatencySample(command);
         completed.push(command);
       }
+    }
+    for (const [typebar, reach] of typebarReach) {
+      typebar.amount = reach;
+      this.positionTypebar(typebar, reach);
     }
     if (completed.length) {
       const finished = new Set(completed);
@@ -1526,9 +1802,12 @@ export class TypewriterModel {
       mesh.material.depthWrite = this.inspectionAmount < 0.55;
     }
     if (this.topCover) {
-      this.topCover.rotation.x = -0.035 - this.inspectionAmount * 0.68;
-      this.topCover.position.y = 2.03 + this.inspectionAmount * 0.38;
-      this.topCover.position.z = -0.4 - this.inspectionAmount * 0.28;
+      const restAngle = 0.035;
+      const hingeAngle = restAngle + this.inspectionAmount * 0.68;
+      const hingeRadius = 0.86;
+      this.topCover.rotation.x = -hingeAngle;
+      this.topCover.position.y = 2.03 + (Math.sin(hingeAngle) - Math.sin(restAngle)) * hingeRadius;
+      this.topCover.position.z = -0.4 + (Math.cos(hingeAngle) - Math.cos(restAngle)) * hingeRadius;
     }
 
     if (!this.returning && !this.tabMotion) {
@@ -1591,6 +1870,166 @@ export class TypewriterModel {
       case 'margin': this.triggerMarginRelease(); return true;
       default: return false;
     }
+  }
+
+  getKeyShellClearanceSnapshot({ sweepSteps = CLEARANCE_SWEEP_STEPS } = {}) {
+    const unsupportedShells = [];
+    const shells = this.shellMeshes
+      .map((mesh) => {
+        const shape = mesh.geometry?.userData?.clearanceShape;
+        if (!shape || shape.type !== 'rounded-box') {
+          unsupportedShells.push(mesh.name || 'UnnamedShell');
+          return null;
+        }
+        mesh.updateMatrix();
+        const restMatrix = mesh.userData.clearanceRestMatrix ?? mesh.matrix;
+        return {
+          name: mesh.name || 'UnnamedShell',
+          shape,
+          inverseRestMatrix: restMatrix.clone().invert(),
+        };
+      })
+      .filter(Boolean);
+
+    const inspect = (depressionAmount) => {
+      const intersections = [];
+      let minimumClearance = Number.POSITIVE_INFINITY;
+      let closest = null;
+      for (const key of this.keys.values()) {
+        for (const shell of shells) {
+          let pairClearance = Number.POSITIVE_INFINITY;
+          for (const object of keyTopObjects(key)) {
+            const objectToMachine = hypotheticalKeyObjectMatrix(key, object, depressionAmount);
+            const objectToShell = shell.inverseRestMatrix.clone().multiply(objectToMachine);
+            pairClearance = Math.min(
+              pairClearance,
+              minimumGeometryDistanceToRoundedBox(object.geometry, objectToShell, shell.shape),
+            );
+          }
+          if (pairClearance < minimumClearance) {
+            minimumClearance = pairClearance;
+            closest = { key: key.code, shell: shell.name, clearance: pairClearance };
+          }
+          if (pairClearance < -CLEARANCE_INTERSECTION_EPSILON) {
+            intersections.push({ key: key.code, shell: shell.name, clearance: pairClearance });
+          }
+        }
+      }
+      return {
+        intersections,
+        minimumClearance,
+        // Compatibility alias for early diagnostics. Intersections use shell-
+        // local signed distances; definitely separated pairs use a conservative
+        // bounding-box lower bound, so this cannot overstate safe clearance.
+        minimumAxisGap: Math.max(0, minimumClearance),
+        closest,
+      };
+    };
+
+    const sweepIntersections = new Map();
+    let sweepMinimumClearance = Number.POSITIVE_INFINITY;
+    let sweepClosest = null;
+    const boundedSweepSteps = Math.max(1, Math.floor(sweepSteps));
+    let rest = null;
+    let depressed = null;
+    for (let step = 0; step <= boundedSweepSteps; step += 1) {
+      const depressionAmount = step / boundedSweepSteps;
+      const sample = inspect(depressionAmount);
+      if (step === 0) rest = sample;
+      if (step === boundedSweepSteps) depressed = sample;
+      if (sample.minimumClearance < sweepMinimumClearance) {
+        sweepMinimumClearance = sample.minimumClearance;
+        sweepClosest = { ...sample.closest, depressionAmount };
+      }
+      for (const intersection of sample.intersections) {
+        const id = `${intersection.key}:${intersection.shell}`;
+        const previous = sweepIntersections.get(id);
+        if (!previous || intersection.clearance < previous.clearance) {
+          sweepIntersections.set(id, { ...intersection, depressionAmount });
+        }
+      }
+    }
+
+    return {
+      unsupportedShells,
+      rest,
+      depressed,
+      sweep: {
+        sampleCount: boundedSweepSteps + 1,
+        intersections: [...sweepIntersections.values()],
+        minimumClearance: sweepMinimumClearance,
+        closest: sweepClosest,
+      },
+    };
+  }
+
+  getKeyNeighborClearanceSnapshot(pairs = DEFAULT_NEIGHBOR_KEY_PAIRS) {
+    const reports = [];
+    for (const [firstCode, secondCode] of pairs) {
+      const first = this.keys.get(firstCode);
+      const second = this.keys.get(secondCode);
+      if (!first || !second) {
+        reports.push({ keys: [firstCode, secondCode], error: 'missing-key' });
+        continue;
+      }
+
+      const target = second.base?.geometry?.userData?.clearanceShape ? second
+        : first.base?.geometry?.userData?.clearanceShape ? first : null;
+      const source = target === second ? first : second;
+      const targetObject = target?.base;
+      if (!keyTopObjects(first).length || !keyTopObjects(second).length) {
+        reports.push({ keys: [firstCode, secondCode], error: 'missing-key-top' });
+        continue;
+      }
+
+      const shape = targetObject?.geometry?.userData?.clearanceShape;
+      let minimumClearance = Number.POSITIVE_INFINITY;
+      let closest = null;
+      for (let firstStep = 0; firstStep <= NEIGHBOR_SWEEP_STEPS; firstStep += 1) {
+        for (let secondStep = 0; secondStep <= NEIGHBOR_SWEEP_STEPS; secondStep += 1) {
+          const firstDepression = firstStep / NEIGHBOR_SWEEP_STEPS;
+          const secondDepression = secondStep / NEIGHBOR_SWEEP_STEPS;
+          if (target && targetObject && shape) {
+            const sourceDepression = source === first ? firstDepression : secondDepression;
+            const targetDepression = target === first ? firstDepression : secondDepression;
+            const targetToMachine = hypotheticalKeyObjectMatrix(target, targetObject, targetDepression);
+            const machineToTarget = targetToMachine.clone().invert();
+            for (const object of keyTopObjects(source)) {
+              const objectToTarget = machineToTarget.clone().multiply(
+                hypotheticalKeyObjectMatrix(source, object, sourceDepression),
+              );
+              const clearance = minimumGeometryDistanceToRoundedBox(object.geometry, objectToTarget, shape);
+              if (clearance < minimumClearance) {
+                minimumClearance = clearance;
+                closest = { firstDepression, secondDepression };
+              }
+            }
+          } else {
+            const sample = minimumKeyTopBoundsClearance(
+              first,
+              second,
+              firstDepression,
+              secondDepression,
+            );
+            if (sample.clearance < minimumClearance) {
+              minimumClearance = sample.clearance;
+              closest = { firstDepression, secondDepression, ...sample.closest };
+            }
+          }
+        }
+      }
+      reports.push({
+        keys: [firstCode, secondCode],
+        minimumClearance,
+        collision: minimumClearance < -CLEARANCE_INTERSECTION_EPSILON,
+        closest,
+      });
+    }
+    return {
+      sampleCountPerPair: (NEIGHBOR_SWEEP_STEPS + 1) ** 2,
+      pairs: reports,
+      intersections: reports.filter((report) => report.collision),
+    };
   }
 
   get busy() {
