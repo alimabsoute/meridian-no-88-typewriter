@@ -32,8 +32,27 @@ async function pressAndCaptureKeyPeak(page, {
   threshold = 0.18,
   maxSteps = 96,
 }) {
-  await page.keyboard.down(key);
+  await page.evaluate(() => {
+    const model = window.__MERIDIAN__.model;
+    if (window.__MERIDIAN_KEY_FREEZE__) throw new Error('A keyboard capture is already active');
+    const keyboardBusy = model.activeStrikes.length > 0
+      || model.commandQueue.length > 0
+      || Boolean(model.returning)
+      || Boolean(model.tabMotion)
+      || Boolean(model.paperLoading);
+    if (keyboardBusy) throw new Error('Keyboard capture started while mechanics were active');
+
+    // This test measures host-key correspondence from a clean mechanical instant.
+    // Scheduler ordering and burst latency are exercised independently below.
+    model.nextMechanicalImpactAt = model.strikeTimelineSeconds;
+    window.__MERIDIAN_KEY_FREEZE__ = {
+      hadOwnUpdate: Object.prototype.hasOwnProperty.call(model, 'update'),
+      originalUpdate: model.update,
+    };
+    model.update = () => {};
+  });
   try {
+    await page.keyboard.press(key);
     return await page.evaluate(({
       targetCode,
       comparisonCodes,
@@ -41,6 +60,8 @@ async function pressAndCaptureKeyPeak(page, {
       steps,
     }) => {
       const model = window.__MERIDIAN__.model;
+      const update = window.__MERIDIAN_KEY_FREEZE__?.originalUpdate;
+      if (typeof update !== 'function') throw new Error('Keyboard capture lost the model update function');
       const sample = {
         target: 0,
         others: Object.fromEntries(comparisonCodes.map((comparisonCode) => [comparisonCode, 0])),
@@ -48,7 +69,7 @@ async function pressAndCaptureKeyPeak(page, {
         done: false,
       };
       for (let step = 0; step < steps; step += 1) {
-        model.update(1 / 120);
+        update.call(model, 1 / 120);
         sample.target = Math.max(sample.target, model.keys.get(targetCode)?.depression ?? 0);
         for (const comparisonCode of comparisonCodes) {
           sample.others[comparisonCode] = Math.max(
@@ -72,7 +93,14 @@ async function pressAndCaptureKeyPeak(page, {
       steps: maxSteps,
     });
   } finally {
-    await page.keyboard.up(key);
+    await page.evaluate(() => {
+      const model = window.__MERIDIAN__?.model;
+      const capture = window.__MERIDIAN_KEY_FREEZE__;
+      if (!model || !capture) return;
+      if (capture.hadOwnUpdate) model.update = capture.originalUpdate;
+      else delete model.update;
+      delete window.__MERIDIAN_KEY_FREEZE__;
+    }).catch(() => {});
   }
 }
 
@@ -99,11 +127,15 @@ async function settleKeyboardModel(page, codes, maxSteps = 128) {
         phase: command.phase,
         duration: command.duration,
         elapsed: command.elapsed,
+        mechanicalDelay: command.mechanicalDelay,
+        mechanicalImpactAt: command.mechanicalImpactAt,
       })),
       queue: model.commandQueue.map((command) => ({ type: command.type, code: command.code })),
       returning: Boolean(model.returning),
       tabMotion: Boolean(model.tabMotion),
       paperLoading: Boolean(model.paperLoading),
+      strikeTimelineSeconds: model.strikeTimelineSeconds,
+      nextMechanicalImpactAt: model.nextMechanicalImpactAt,
       depressions: Object.fromEntries(
         keyCodes.map((code) => [code, model.keys.get(code)?.depression ?? null]),
       ),
@@ -268,7 +300,10 @@ try {
     marks: window.__MERIDIAN__.document.marks.length,
   }));
 
-  await keyboardPage.keyboard.type('x');
+  const recoveryPeak = (await pressAndCaptureKeyPeak(keyboardPage, {
+    key: 'x',
+    code: 'KeyX',
+  })).target;
   await settleKeyboardModel(keyboardPage, ['KeyX']);
   const afterRecoveryType = await keyboardPage.evaluate(() => ({
     column: window.__MERIDIAN__.document.column,
@@ -277,10 +312,19 @@ try {
     tabDepression: window.__MERIDIAN__.model.keys.get('Tab')?.depression ?? 1,
     backspaceDepression: window.__MERIDIAN__.model.keys.get('Backspace')?.depression ?? 1,
   }));
-  tabBackspaceState = { marksBeforeTab, tabPeak, backspacePeak, afterTab, afterBackspace, afterRecoveryType };
+  tabBackspaceState = {
+    marksBeforeTab,
+    tabPeak,
+    backspacePeak,
+    recoveryPeak,
+    afterTab,
+    afterBackspace,
+    afterRecoveryType,
+  };
   if (
     tabPeak <= 0.18
     || backspacePeak <= 0.18
+    || recoveryPeak <= 0.18
     || afterTab.column !== 8
     || afterTab.marks !== marksBeforeTab
     || afterBackspace.column !== 7
