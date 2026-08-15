@@ -25,7 +25,8 @@
 
 - `77` unit tests pass across document, machine, geometry, paper state/view/storage, mechanical audio, room state/view/backdrop, and atmosphere audio.
 - A simulated 15/60/120-minute writing test completes with empty transient queues, bounded latency history, and exact action counts.
-- A renderer-isolated 44-character browser burst preserved exact text order with p95 feedback of `0.7 ms`, p95 physical impact of `50.5 ms`, and a peak queue depth of `1`; full-scene rendering is gated separately.
+- A real-browser 44-key burst always gates exact input order, 44 completed actions, immediate queue-to-feedback response, and 36 ink impressions. Wall-clock start, impact, and backlog limits are enforced when the runner sustains a trustworthy render cadence; cadence-degraded software-rendered runs report those values diagnostically. A reference local run measured `0.7 ms` p95 queue-to-feedback, `50.5 ms` p95 physical impact, and a peak queue depth of `1`.
+- Mechanics timing is gated independently at a deterministic 12 ms input cadence and 4 ms simulation step, including one typebar at the print point, exact impact order, an empty final queue, and p95 simulated impact at or below `125 ms`. Full-scene rendering is gated separately.
 - Exhaustive unit checks cover every printable key/character; real browser input covers Backquote and all four rows plus Tab, Backspace, independent Shift, return, red ribbon, mobile input, and focus recovery.
 - Minimum swept key-to-shell clearance measured `+0.0677`; the minimum across 52 neighboring pairs measured `+0.0350`; Equal/Backspace measured `+0.0450`.
 - A 5 MiB quota test stored 25 completely full 65×46 pages at a `3,685,956`-byte transactional peak and wrote only one page blob on the final checkpoint.

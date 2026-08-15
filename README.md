@@ -62,6 +62,8 @@ npm run verify
 
 `verify` runs the complete unit suite, builds and packages the standalone file, exercises interaction and persistence, proves direct-file/offline behavior, checks default and high quality, measures the room's structural and CPU budgets, and regenerates the 11-view visual matrix. Browser checks reuse a Meridian preview already running on port `4177`; otherwise they start an isolated preview and stop only the process they created.
 
+Verification treats browser input handling, deterministic mechanics timing, and rendered output as separate gates. Wall-clock strike limits apply only on cadence-qualified runners; timings from throttled software renderers remain visible diagnostics rather than false failures.
+
 The Pages build is `dist/index.html`. The identically self-contained release asset is generated at `dist/Meridian-No-88-Typewriter.html` by:
 
 ```bash

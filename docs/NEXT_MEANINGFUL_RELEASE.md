@@ -80,6 +80,6 @@ The release contains:
   page lifecycle, persistence, weather controls, reduced motion, and exports.
 - Screenshot checks for intro, Writer, typed page, Inspection, page handling,
   kept manuscript, crumpled discard, rain, and snow.
-- Instrumented renderer-isolated browser latency and burst checks with real timestamps from input through impact; full-scene rendering is checked separately.
+- Instrumented renderer-isolated browser checks always enforce exact order, completion, queue-to-feedback response, and ink impressions. Wall-clock start, impact, and backlog limits apply only when the measured burst contains at least 20 frames with p95 frame time at or below `50 ms` and no frame above `100 ms`; deterministic kernel mechanics and full-scene rendering remain independent, unconditional gates.
 - Desktop, narrow viewport, direct-file, WebGL-disabled, and quality-fallback checks.
 - Clean production build and a final manual visual review at full resolution.

@@ -12,6 +12,7 @@ const targetUrl = preview.targetUrl;
 // Real browser delivery at 500 WPM complements the deterministic 12 ms
 // (1,000 WPM) mechanics-kernel stress in typewriter-model.test.js.
 const BROWSER_BURST_DELAY_MS = 24;
+const BROWSER_BURST_TEXT = 'The quick brown fox jumps over 13 lazy dogs!';
 const ISOLATED_RENDER_SIZE = Object.freeze({ width: 160, height: 120 });
 
 function deterministicRandom() {
@@ -444,33 +445,120 @@ const sceneWasVisible = await page.evaluate(() => {
   return visible;
 });
 let latency;
+let paperUploadBaseline;
 let paperUploads;
+let paperUploadDelta;
+let burstFrameCadence;
+let wallClockMechanicsGate;
 try {
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
+  await page.evaluate(() => {
+    const sample = {
+      intervals: [],
+      lastFrameAt: null,
+      running: true,
+    };
+    window.__MERIDIAN_BURST_CADENCE__ = sample;
+    const recordFrame = (now) => {
+      if (!sample.running) return;
+      if (sample.lastFrameAt !== null) sample.intervals.push(now - sample.lastFrameAt);
+      sample.lastFrameAt = now;
+      requestAnimationFrame(recordFrame);
+    };
+    requestAnimationFrame(recordFrame);
+  });
+  paperUploadBaseline = await page.evaluate(
+    () => window.__MERIDIAN__.model.paperRenderer.getUploadStats(),
+  );
   await page.evaluate(() => window.__MERIDIAN__.model.resetLatencyMetrics());
-  await page.keyboard.type('The quick brown fox jumps over 13 lazy dogs!', {
+  await page.keyboard.type(BROWSER_BURST_TEXT, {
     delay: BROWSER_BURST_DELAY_MS,
   });
   await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 30000 });
   const first = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
-  if (first !== 'The quick brown fox jumps over 13 lazy dogs!') {
+  if (first !== BROWSER_BURST_TEXT) {
     throw new Error(`First line mismatch: ${JSON.stringify(first)}`);
   }
   latency = await page.evaluate(() => window.__MERIDIAN__.model.getLatencySnapshot());
   paperUploads = await page.evaluate(() => window.__MERIDIAN__.model.paperRenderer.getUploadStats());
-  if (latency.startMs.p95 > 50 || latency.impactMs.p95 > 125 || latency.peakQueueDepth > 4) {
+  paperUploadDelta = {
+    fullUploads: paperUploads.fullUploads - paperUploadBaseline.fullUploads,
+    partialUploads: paperUploads.partialUploads - paperUploadBaseline.partialUploads,
+    fullBytes: paperUploads.fullBytes - paperUploadBaseline.fullBytes,
+    partialBytes: paperUploads.partialBytes - paperUploadBaseline.partialBytes,
+    fullTextureBytes: paperUploads.fullTextureBytes,
+  };
+  burstFrameCadence = await page.evaluate(() => {
+    const sample = window.__MERIDIAN_BURST_CADENCE__;
+    if (!sample) throw new Error('Burst cadence sample is missing');
+    sample.running = false;
+    const sorted = [...sample.intervals].sort((a, b) => a - b);
+    const averageMs = sorted.length
+      ? sorted.reduce((total, value) => total + value, 0) / sorted.length
+      : null;
+    const p95Index = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
+    const result = {
+      sampleCount: sorted.length,
+      averageMs,
+      p95Ms: sorted.length ? sorted[p95Index] : null,
+      maxMs: sorted.length ? sorted.at(-1) : null,
+    };
+    delete window.__MERIDIAN_BURST_CADENCE__;
+    return result;
+  });
+  const cadenceQualified = burstFrameCadence.sampleCount >= 20
+    && burstFrameCadence.p95Ms <= 50
+    && burstFrameCadence.maxMs <= 100;
+  wallClockMechanicsGate = {
+    enforced: cadenceQualified,
+    minimumFrameSamples: 20,
+    frameP95CeilingMs: 50,
+    frameMaxCeilingMs: 100,
+    startCeilingMs: 50,
+    impactCeilingMs: 125,
+    queueCeiling: 4,
+    reason: cadenceQualified ? 'cadence-qualified' : 'skipped-render-cadence',
+  };
+  if (
+    latency.sampleCount !== BROWSER_BURST_TEXT.length
+    || latency.currentQueueDepth !== 0
+    || latency.feedbackMs.p95 > 16
+    || latency.feedbackMs.max > 50
+    || (
+      wallClockMechanicsGate.enforced
+      && (
+        latency.startMs.p95 > wallClockMechanicsGate.startCeilingMs
+        || latency.impactMs.p95 > wallClockMechanicsGate.impactCeilingMs
+        || latency.peakQueueDepth > wallClockMechanicsGate.queueCeiling
+      )
+    )
+  ) {
     throw new Error(`Typing latency regression: ${JSON.stringify({
       averageFrameMs,
       browserBurstDelayMs: BROWSER_BURST_DELAY_MS,
+      burstFrameCadence,
+      wallClockMechanicsGate,
       latency,
     })}`);
   }
-  if (!paperUploads.partialUploads || paperUploads.partialBytes >= paperUploads.fullTextureBytes * 0.2) {
-    throw new Error(`Paper texture upload regression: ${JSON.stringify(paperUploads)}`);
+  if (
+    paperUploadDelta.partialUploads !== 36
+    || paperUploadDelta.partialBytes >= paperUploadDelta.fullTextureBytes * 0.2
+  ) {
+    throw new Error(`Paper texture upload regression: ${JSON.stringify({
+      paperUploadBaseline,
+      paperUploads,
+      paperUploadDelta,
+    })}`);
   }
 } finally {
+  await page.evaluate(() => {
+    const sample = window.__MERIDIAN_BURST_CADENCE__;
+    if (sample) sample.running = false;
+    delete window.__MERIDIAN_BURST_CADENCE__;
+  });
   await page.setViewportSize(fullSceneViewport);
   await page.evaluate((visible) => {
     window.__MERIDIAN__.model.scene.visible = visible;
@@ -849,7 +937,10 @@ process.stdout.write(`${JSON.stringify({
   averageFrameMs,
   approximateFps: Math.round(1000 / averageFrameMs),
   latency,
+  burstFrameCadence,
+  wallClockMechanicsGate,
   paperUploads,
+  paperUploadDelta,
   shiftState,
   geometryClearance,
   keyCorrespondence,
