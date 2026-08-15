@@ -116,6 +116,7 @@ async function releaseCurrentSheet(page) {
   await page.click('#release-sheet');
   await advancePaperMotions(page);
   await page.evaluate(() => window.__MERIDIAN__.setView('paper', 0));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   await page.waitForFunction(
     () => Boolean(window.__MERIDIAN__.paperState.looseSheet)
       && window.__MERIDIAN__.paperView.phase === 'inspecting',
