@@ -1236,7 +1236,7 @@ function updateLiveUi(delta) {
 
 function animate(now) {
   requestAnimationFrame(animate);
-  const delta = Math.min(0.05, (now - lastTime) / 1000);
+  const delta = Math.max(0, Math.min(0.05, (now - lastTime) / 1000));
   lastTime = now;
   model.update(delta);
   paperView.update(delta);

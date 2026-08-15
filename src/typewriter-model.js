@@ -1461,7 +1461,12 @@ export class TypewriterModel {
     command.startedAt = this.commandClock();
     const timeline = this.strikeTimelineSeconds ?? 0;
     const earliestImpact = timeline + COMMAND_IMPACT_SECONDS;
-    command.mechanicalImpactAt = Math.max(earliestImpact, this.nextMechanicalImpactAt ?? 0);
+    // A reservation is meaningful only while another strike is active. Never
+    // let an idle machine inherit stale scheduler history from an earlier run.
+    const reservedImpact = this.activeStrikes.length
+      ? (this.nextMechanicalImpactAt ?? earliestImpact)
+      : earliestImpact;
+    command.mechanicalImpactAt = Math.max(earliestImpact, reservedImpact);
     command.mechanicalDelay = command.mechanicalImpactAt - earliestImpact;
     command.mechanicalReleaseAt = command.mechanicalImpactAt + (COMMAND_RELEASE_SECONDS - COMMAND_IMPACT_SECONDS);
     this.nextMechanicalImpactAt = command.mechanicalImpactAt + MECHANICAL_IMPACT_SLOT_SECONDS;
@@ -1611,7 +1616,8 @@ export class TypewriterModel {
   }
 
   update(delta) {
-    const dt = Math.min(0.04, delta);
+    const finiteDelta = Number.isFinite(delta) ? delta : 0;
+    const dt = Math.max(0, Math.min(0.04, finiteDelta));
     this.lastDelta = dt;
     if (this.marginReleaseTimer > 0) {
       this.marginReleaseTimer -= dt;

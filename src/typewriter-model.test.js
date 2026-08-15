@@ -133,6 +133,42 @@ describe('TypewriterModel no-lag command kernel', () => {
     expect(model.activeStrikes).toHaveLength(20);
   });
 
+  it('keeps its timeline and active commands monotonic across invalid frame deltas', () => {
+    const { model } = makeKernel();
+    model.updateKeys = vi.fn();
+    model.updateReturn = vi.fn();
+    model.updateTab = vi.fn();
+    model.updatePaperLoading = vi.fn();
+    model.updateMechanisms = vi.fn();
+
+    model.queueCharacter('a', 'KeyA');
+    model.startQueuedCommands();
+    model.update(-8.5);
+    model.update(Number.NaN);
+    expect(model.strikeTimelineSeconds).toBe(0);
+    expect(model.lastDelta).toBe(0);
+    expect(model.activeStrikes[0].elapsed).toBe(0);
+
+    for (let step = 0; step < 4; step += 1) model.update(0.04);
+    expect(model.document.toPlainText()).toBe('a');
+    expect(model.activeStrikes).toHaveLength(0);
+  });
+
+  it('ignores stale idle reservations while retaining overlapping impact slots', () => {
+    const { model } = makeKernel();
+
+    model.nextMechanicalImpactAt = 8.5;
+    model.queueCharacter('a', 'KeyA');
+    model.queueCharacter('b', 'KeyB');
+    model.startQueuedCommands();
+
+    expect(model.activeStrikes).toHaveLength(2);
+    expect(model.activeStrikes[0].mechanicalDelay).toBe(0);
+    expect(model.activeStrikes[0].mechanicalImpactAt).toBeCloseTo(0.055);
+    expect(model.activeStrikes[1].mechanicalDelay).toBeCloseTo(0.008);
+    expect(model.activeStrikes[1].mechanicalImpactAt).toBeCloseTo(0.063);
+  });
+
   it('preserves character and space impact order while actions overlap', () => {
     const { model, setClock } = makeKernel();
     model.queueCharacter('a', 'KeyA');
