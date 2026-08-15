@@ -52,17 +52,70 @@ async function openDocumentTray(page) {
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
 }
 
+async function settleKeyboardModel(page, maxSteps = 256) {
+  const state = await page.evaluate((steps) => {
+    const model = window.__MERIDIAN__.model;
+    for (let step = 0; step < steps; step += 1) {
+      if (!model.busy) return { settled: true, step };
+      model.update(0.04);
+    }
+    return {
+      settled: !model.busy,
+      busy: model.busy,
+      queueDepth: model.commandQueue.length,
+      activeStrikes: model.activeStrikes.length,
+      returning: Boolean(model.returning),
+      tabMotion: Boolean(model.tabMotion),
+      paperLoading: Boolean(model.paperLoading),
+    };
+  }, maxSteps);
+  invariant(state.settled, `Visual keyboard model did not settle: ${JSON.stringify(state)}`);
+}
+
+async function settleInspection(page, maxSteps = 64) {
+  const state = await page.evaluate((steps) => {
+    const model = window.__MERIDIAN__.model;
+    for (let step = 0; step < steps; step += 1) {
+      if (model.inspectionAmount > 0.95) {
+        return { settled: true, step, amount: model.inspectionAmount };
+      }
+      model.update(0.04);
+    }
+    return { settled: model.inspectionAmount > 0.95, amount: model.inspectionAmount };
+  }, maxSteps);
+  invariant(state.settled, `Visual inspection did not settle: ${JSON.stringify(state)}`);
+}
+
+async function advancePaperMotions(page, { rounds = 4, stepsPerRound = 24 } = {}) {
+  let state;
+  for (let round = 0; round < rounds; round += 1) {
+    state = await page.evaluate((steps) => {
+      const { paperView } = window.__MERIDIAN__;
+      for (let step = 0; step < steps; step += 1) paperView.update(0.05);
+      return {
+        phase: paperView.phase,
+        activeMotion: Boolean(paperView.motion),
+      };
+    }, stepsPerRound);
+    // Let async click handlers continue between chained paper motions.
+    await page.waitForTimeout(0);
+  }
+  return state;
+}
+
 async function typeAndSettle(page, lines) {
   for (let index = 0; index < lines.length; index += 1) {
     if (index) await page.keyboard.press('Enter');
     await page.keyboard.type(lines[index], { delay: 10 });
   }
-  await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 30000 });
+  await settleKeyboardModel(page);
 }
 
 async function releaseCurrentSheet(page) {
   await openDocumentTray(page);
   await page.click('#release-sheet');
+  await advancePaperMotions(page);
+  await page.evaluate(() => window.__MERIDIAN__.setView('paper', 0));
   await page.waitForFunction(
     () => Boolean(window.__MERIDIAN__.paperState.looseSheet)
       && window.__MERIDIAN__.paperView.phase === 'inspecting',
@@ -79,6 +132,8 @@ async function holdToCrumple(page) {
   await page.mouse.down();
   await page.waitForTimeout(1050);
   await page.mouse.up();
+  await advancePaperMotions(page);
+  await page.evaluate(() => window.__MERIDIAN__.setView('writer', 0));
   await page.waitForFunction(
     () => window.__MERIDIAN__.paperState.discards.length === 1
       && window.__MERIDIAN__.paperView.phase === 'idle',
@@ -124,7 +179,10 @@ async function captureScenario({
   try {
     await waitForSimulator(page, { enter });
     const scenarioAssertions = await run(page);
-    await page.waitForTimeout(250);
+    // State setup may be deterministically stepped on software-rendered CI.
+    // Require a real animation frame so every plate captures an actual render.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    await page.waitForTimeout(100);
     assertBrowserClean(name, browserErrors);
     const outputPath = path.join(shotDir, filename);
     await page.screenshot({ path: outputPath, animations: 'disabled' });
@@ -194,6 +252,8 @@ try {
     filename: '04-inspection.png',
     run: async (page) => {
       await page.click('#inspection-toggle');
+      await settleInspection(page);
+      await page.evaluate(() => window.__MERIDIAN__.setView('mechanism', 0));
       await page.waitForFunction(() => window.__MERIDIAN__.model.inspectionAmount > 0.95, null, { timeout: 10000 });
       const state = await page.evaluate(() => ({
         pressed: document.querySelector('#inspection-toggle')?.getAttribute('aria-pressed'),
@@ -268,6 +328,8 @@ try {
       await typeAndSettle(page, ['Filed beside the machine.']);
       await releaseCurrentSheet(page);
       await page.click('#keep-sheet');
+      await advancePaperMotions(page);
+      await page.evaluate(() => window.__MERIDIAN__.setView('writer', 0));
       await page.waitForFunction(
         () => window.__MERIDIAN__.paperState.manuscript.length === 1
           && window.__MERIDIAN__.paperView.phase === 'idle',
@@ -405,7 +467,7 @@ try {
           data: 'Hi',
         }));
       });
-      await page.waitForFunction(() => !window.__MERIDIAN__.model.busy && window.__MERIDIAN__.document.marks.length === 2, null, { timeout: 15000 });
+      await settleKeyboardModel(page);
       const state = await page.evaluate(() => ({
         text: window.__MERIDIAN__.document.toPlainText(),
         inputVisible: document.querySelector('#mobile-input')?.getBoundingClientRect().height > 0,
