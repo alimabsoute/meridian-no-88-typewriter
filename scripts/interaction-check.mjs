@@ -720,13 +720,13 @@ if (restored.text !== 'recover me' || restored.sheet !== 2 || restored.manuscrip
   throw new Error(`Persistence mismatch: ${JSON.stringify(restored)}`);
 }
 if (errors.length) throw new Error(`Console errors: ${errors.join(' | ')}`);
+await page.context().close();
 
 const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 await mobileContext.addInitScript(deterministicRandom);
 const mobilePage = await mobileContext.newPage();
 const mobileErrors = collectErrors(mobilePage);
-await mobilePage.goto(targetUrl, { waitUntil: 'networkidle' });
-await mobilePage.waitForFunction(() => Boolean(window.__MERIDIAN__));
+await waitForSimulator(mobilePage);
 await mobilePage.click('#enter-studio');
 await mobilePage.waitForFunction(() => {
   const element = document.querySelector('#mobile-input');
