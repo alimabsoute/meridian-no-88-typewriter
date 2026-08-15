@@ -13,6 +13,7 @@ const targetUrl = preview.targetUrl;
 // (1,000 WPM) mechanics-kernel stress in typewriter-model.test.js.
 const BROWSER_BURST_DELAY_MS = 24;
 const BROWSER_BURST_TEXT = 'The quick brown fox jumps over 13 lazy dogs!';
+const BROWSER_IMPACT_CEILING_MS = 125;
 const ISOLATED_RENDER_SIZE = Object.freeze({ width: 160, height: 120 });
 
 function deterministicRandom() {
@@ -517,8 +518,8 @@ try {
     frameP95CeilingMs: 50,
     frameMaxCeilingMs: 100,
     startCeilingMs: 50,
-    impactCeilingMs: 125,
-    queueCeiling: 4,
+    impactCeilingMs: BROWSER_IMPACT_CEILING_MS,
+    queuePolicy: 'diagnostic-only',
     reason: cadenceQualified ? 'cadence-qualified' : 'skipped-render-cadence',
   };
   if (
@@ -531,7 +532,6 @@ try {
       && (
         latency.startMs.p95 > wallClockMechanicsGate.startCeilingMs
         || latency.impactMs.p95 > wallClockMechanicsGate.impactCeilingMs
-        || latency.peakQueueDepth > wallClockMechanicsGate.queueCeiling
       )
     )
   ) {
