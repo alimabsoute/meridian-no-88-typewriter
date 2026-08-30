@@ -1,6 +1,6 @@
 # Third-party notices
 
-Meridian No. 88 bundles the following open-source software and fonts. These notices apply only to the listed third-party components; the Meridian project itself remains all rights reserved.
+Octoberline 211 bundles the following open-source software and fonts. These notices apply only to the listed third-party components; the Octoberline 211 project itself remains all rights reserved.
 
 ## Three.js
 

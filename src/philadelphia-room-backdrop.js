@@ -3,6 +3,19 @@ import * as THREE from 'three';
 const DESIGN_WIDTH = 960;
 const DESIGN_HEIGHT = 640;
 
+// Design-space bounds for the skyline landmark. Keeping these coordinates in
+// one place lets higher-fidelity room layers align an animated crown with the
+// low-cost raster fallback without reverse engineering the artwork.
+const PECO_LANDMARK = Object.freeze({
+  tower: Object.freeze([601, 350, 80, 216]),
+  broadFace: Object.freeze([601, 350, 63, 216]),
+  sideFace: Object.freeze([664, 350, 17, 216]),
+  crown: Object.freeze([596, 318, 88, 32]),
+  crownBroadFace: Object.freeze([596, 318, 70, 29]),
+  crownSideFace: Object.freeze([666, 323, 18, 27]),
+  mast: Object.freeze([638, 294, 4, 24]),
+});
+
 /**
  * Default colors are expressed in display-space RGB because this module writes
  * directly into an sRGB DataTexture. Palette values may be CSS hex strings,
@@ -30,7 +43,7 @@ export const PHILADELPHIA_BACKDROP_PALETTE = Object.freeze({
   snow: Object.freeze([224, 232, 230]),
 });
 
-/** Recommended mount for the current Meridian writer camera and room origin. */
+/** Recommended mount for the current Octoberline 211 writer camera and room origin. */
 export const PHILADELPHIA_BACKDROP_PLANE = Object.freeze({
   width: 15,
   height: 10,
@@ -38,7 +51,7 @@ export const PHILADELPHIA_BACKDROP_PLANE = Object.freeze({
   rotation: Object.freeze([0, 0, 0]),
 });
 
-const WEATHER_PRESETS = new Set(['quiet', 'rain', 'snow', 'nor-easter']);
+const WEATHER_PRESETS = new Set(['quiet', 'autumn-wind', 'rain', 'snow', 'nor-easter']);
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -297,6 +310,15 @@ function scaleLayout(width, height) {
     aperture: box(496, 68, 368, 408),
     radiator: box(535, 507, 320, 111),
     baseboard: box(0, 568, 960, 58),
+    peco: Object.freeze({
+      tower: box(...PECO_LANDMARK.tower),
+      broadFace: box(...PECO_LANDMARK.broadFace),
+      sideFace: box(...PECO_LANDMARK.sideFace),
+      crown: box(...PECO_LANDMARK.crown),
+      crownBroadFace: box(...PECO_LANDMARK.crownBroadFace),
+      crownSideFace: box(...PECO_LANDMARK.crownSideFace),
+      mast: box(...PECO_LANDMARK.mast),
+    }),
     anchors: Object.freeze({
       wall: Object.freeze({ x: Math.round(165 * sx), y: Math.round(285 * sy) }),
       sky: Object.freeze({ x: Math.round(595 * sx), y: Math.round(120 * sy) }),
@@ -449,6 +471,80 @@ function drawRowhouseWindow(raster, x, y, width, height, palette, lit, depth = 0
   if (lit) raster.rect(x + width * 0.14, y + height * 0.76, width * 0.72, 2, [251, 213, 143], 0.58);
 }
 
+function drawPecoBuilding(raster, palette) {
+  const sx = raster.width / DESIGN_WIDTH;
+  const sy = raster.height / DESIGN_HEIGHT;
+  const frontTop = mixColor(palette.windowDark, [87, 96, 101], 0.38);
+  const frontBottom = mixColor(palette.windowDark, [45, 51, 55], 0.34);
+  const side = mixColor(palette.windowDark, palette.skyTop, 0.1);
+  const band = mixColor(palette.windowDark, [70, 83, 91], 0.25);
+  const rib = mixColor(palette.windowDark, [104, 111, 111], 0.27);
+  const crownDark = scaleColor(palette.windowDark, 0.52);
+
+  // A slim rooftop mast and mechanical penthouse establish the silhouette
+  // before the larger crown and tower planes are laid over them.
+  raster.line(640 * sx, 294 * sy, 640 * sx, 320 * sy, [38, 45, 48], Math.max(1, 1.5 * sx), 0.9);
+  raster.line(640 * sx, 296 * sy, 635 * sx, 311 * sy, [38, 45, 48], Math.max(0.7, sx), 0.62);
+  raster.line(640 * sx, 296 * sy, 645 * sx, 311 * sy, [38, 45, 48], Math.max(0.7, sx), 0.62);
+  raster.ellipse(640 * sx, 294 * sy, Math.max(1, 1.4 * sx), Math.max(1, 1.4 * sy), [157, 70, 50], 0.62);
+  raster.rect(633 * sx, 309 * sy, 15 * sx, 11 * sy, [26, 31, 33], 0.96);
+
+  // The 1970 Modernist slab is intentionally restrained: alternating
+  // horizontal window bands, deep spandrels, and a shadowed east face create
+  // scale without competing with the desk or the future moving message.
+  raster.softRect(598 * sx, 347 * sy, 86 * sx, 223 * sy, 7 * Math.max(sx, sy), palette.windowDark, 0.18);
+  raster.gradientRect(601 * sx, 350 * sy, 63 * sx, 216 * sy, frontTop, frontBottom);
+  raster.polygon([
+    [664 * sx, 350 * sy], [681 * sx, 355 * sy],
+    [681 * sx, 566 * sy], [664 * sx, 566 * sy],
+  ], side, 0.98);
+
+  for (let floor = 0; floor < 17; floor += 1) {
+    const floorY = (354 + floor * 12.7) * sy;
+    raster.rect(601 * sx, floorY, 63 * sx, 4.1 * sy, band, 0.92);
+    raster.line(601 * sx, floorY, 664 * sx, floorY, [90, 100, 104], Math.max(0.6, sy * 0.72), 0.25);
+    raster.polygon([
+      [664 * sx, floorY], [681 * sx, floorY + 1.5 * sy],
+      [681 * sx, floorY + 4.9 * sy], [664 * sx, floorY + 4.1 * sy],
+    ], scaleColor(band, 0.7), 0.9);
+  }
+
+  for (let mullion = 1; mullion < 8; mullion += 1) {
+    const mullionX = (601 + mullion * 7.875) * sx;
+    raster.line(mullionX, 353 * sy, mullionX, 566 * sy, [17, 21, 23], Math.max(0.55, sx * 0.65), 0.38);
+  }
+  raster.line(664 * sx, 351 * sy, 664 * sx, 566 * sy, [11, 15, 17], Math.max(1, sx), 0.8);
+  raster.line(681 * sx, 355 * sy, 681 * sx, 566 * sy, [11, 15, 17], Math.max(0.8, sx), 0.56);
+
+  // Sparse occupied offices keep the slab believable at dusk while retaining
+  // a much quieter value than the rowhouse's primary warm-window focal point.
+  [
+    [610, 372, 5], [646, 385, 5], [621, 398, 4], [650, 411, 5],
+    [630, 436, 5], [603, 461, 4], [643, 487, 5], [668, 384, 3],
+  ].forEach(([windowX, windowY, windowWidth]) => {
+    raster.rect(windowX * sx, windowY * sy, windowWidth * sx, 2.2 * sy, [201, 151, 83], 0.34);
+  });
+
+  // The crown remains a dark ribbed wrap in the stationary texture. A dynamic
+  // RGB message layer can sit directly over these published layout bounds.
+  raster.softRect(593 * sx, 315 * sy, 92 * sx, 38 * sy, 5 * Math.max(sx, sy), palette.windowDark, 0.24);
+  raster.rect(596 * sx, 318 * sy, 70 * sx, 29 * sy, crownDark, 0.98);
+  raster.polygon([
+    [666 * sx, 318 * sy], [684 * sx, 323 * sy],
+    [684 * sx, 350 * sy], [666 * sx, 347 * sy],
+  ], scaleColor(crownDark, 0.66), 0.98);
+  raster.rect(596 * sx, 318 * sy, 70 * sx, 3 * sy, [48, 55, 57], 0.64);
+  raster.rect(596 * sx, 344 * sy, 70 * sx, 3 * sy, [8, 12, 14], 0.88);
+  for (let column = 0; column < 18; column += 1) {
+    const columnX = (598 + column * 3.65) * sx;
+    raster.rect(columnX, 321 * sy, Math.max(0.65, 1.1 * sx), 23 * sy, rib, 0.62);
+  }
+  for (let column = 0; column < 5; column += 1) {
+    const columnX = (668 + column * 3.25) * sx;
+    raster.line(columnX, (322 + column * 0.9) * sy, columnX, (347 + column * 0.45) * sy, rib, Math.max(0.6, sx), 0.42);
+  }
+}
+
 function drawExterior(raster, palette, seed, weather, aperture) {
   const sx = raster.width / DESIGN_WIDTH;
   const sy = raster.height / DESIGN_HEIGHT;
@@ -464,35 +560,45 @@ function drawExterior(raster, palette, seed, weather, aperture) {
     raster.ellipse(526 * sx, 220 * sy, 80 * sx, 16 * sy, shiftColor(palette.cloud, 18), 0.13, 0.8);
     raster.ellipse(811 * sx, 95 * sy, 58 * sx, 14 * sy, scaleColor(palette.cloud, 0.8), 0.12, 0.8);
 
+    // A cool horizon veil lowers contrast with distance. It is deliberately
+    // behind the near row so the exterior reads as several city blocks deep.
+    const distantAtmosphere = mixColor(palette.skyTop, [139, 151, 158], 0.52);
+    raster.gradientRect(x, 218 * sy, width, 145 * sy, distantAtmosphere, palette.skyHorizon, 0.11);
+
     // Distant roofline establishes the dense, low Philadelphia horizon.
-    const distantY = 281 * sy;
+    const distantY = 318 * sy;
     raster.polygon([
-      [x, 311 * sy], [x, 292 * sy], [532 * sx, 292 * sy], [532 * sx, distantY],
-      [585 * sx, distantY], [585 * sx, 299 * sy], [627 * sx, 299 * sy],
-      [627 * sx, 275 * sy], [681 * sx, 275 * sy], [681 * sx, 296 * sy],
-      [742 * sx, 296 * sy], [742 * sx, 280 * sy], [809 * sx, 280 * sy],
-      [809 * sx, 301 * sy], [aperture.x + aperture.width, 301 * sy],
+      [x, 348 * sy], [x, 329 * sy], [532 * sx, 329 * sy], [532 * sx, distantY],
+      [585 * sx, distantY], [585 * sx, 336 * sy], [627 * sx, 336 * sy],
+      [627 * sx, 312 * sy], [681 * sx, 312 * sy], [681 * sx, 333 * sy],
+      [742 * sx, 333 * sy], [742 * sx, 317 * sy], [809 * sx, 317 * sy],
+      [809 * sx, 338 * sy], [aperture.x + aperture.width, 338 * sy],
       [aperture.x + aperture.width, 399 * sy], [x, 399 * sy],
-    ], palette.distantBrick, 0.91);
+    ], mixColor(palette.distantBrick, palette.skyTop, 0.34), 0.88);
 
     for (let chimney = 0; chimney < 7; chimney += 1) {
       const chimneyX = (514 + chimney * 50 + rng() * 15) * sx;
-      const chimneyY = (242 + rng() * 37) * sy;
+      const chimneyY = (279 + rng() * 37) * sy;
       const chimneyWidth = (8 + rng() * 5) * sx;
       raster.rect(chimneyX, chimneyY, chimneyWidth, 49 * sy, scaleColor(palette.distantBrick, 0.7));
       raster.rect(chimneyX - 2 * sx, chimneyY - 3 * sy, chimneyWidth + 4 * sx, 5 * sy, scaleColor(palette.distantBrick, 0.55));
       raster.rect(chimneyX + chimneyWidth * 0.58, chimneyY + 3 * sy, 1.5 * sx, 39 * sy, shiftColor(palette.distantBrick, 16), 0.34);
     }
 
+    // The PECO Building is the high landmark in this westward Philadelphia
+    // view. Distant roofs sit behind it; the near row painted next naturally
+    // occludes its lower floors and establishes real city-block depth.
+    drawPecoBuilding(raster, palette);
+
     // The near row is deliberately contiguous and narrow: flat roofs, brick
     // party walls, modest cornices, rear additions, and irregular chimneys.
     const buildings = [
-      { x: 489, w: 67, roof: 332, tone: -6 },
-      { x: 555, w: 73, roof: 318, tone: 7 },
-      { x: 627, w: 69, roof: 340, tone: -12 },
-      { x: 695, w: 77, roof: 309, tone: 11 },
-      { x: 771, w: 64, roof: 329, tone: -3 },
-      { x: 834, w: 47, roof: 316, tone: 4 },
+      { x: 489, w: 67, roof: 372, tone: -6 },
+      { x: 555, w: 73, roof: 358, tone: 7 },
+      { x: 627, w: 69, roof: 380, tone: -12 },
+      { x: 695, w: 77, roof: 349, tone: 11 },
+      { x: 771, w: 64, roof: 369, tone: -3 },
+      { x: 834, w: 47, roof: 356, tone: 4 },
     ];
 
     buildings.forEach((building, index) => {
@@ -500,28 +606,43 @@ function drawExterior(raster, palette, seed, weather, aperture) {
       const by = building.roof * sy;
       const bw = building.w * sx;
       const bh = aperture.y + aperture.height - by + 5 * sy;
-      const facade = shiftColor(palette.brick, building.tone);
+      const facade = mixColor(
+        shiftColor(palette.brick, building.tone - 8),
+        [53, 62, 68],
+        0.36,
+      );
+      raster.softRect(bx + 3 * sx, by + 4 * sy, bw + 3 * sx, bh, 5 * sy, palette.windowDark, 0.28);
       raster.rect(bx, by, bw, bh, facade);
       drawBrickCourses(raster, bx, by, bw, bh, { ...palette, brick: facade }, seed + index * 31, 0);
       raster.rect(bx - 1 * sx, by - 4 * sy, bw + 2 * sx, 6 * sy, scaleColor(facade, 0.58));
       raster.rect(bx, by + 4 * sy, bw, 3 * sy, shiftColor(facade, 17), 0.5);
       raster.rect(bx + bw - 2 * sx, by, 2 * sx, bh, scaleColor(facade, 0.58), 0.75);
+      raster.polygon([
+        [bx + bw, by], [bx + bw + 4 * sx, by + 4 * sy],
+        [bx + bw + 4 * sx, by + bh], [bx + bw, by + bh],
+      ], scaleColor(facade, 0.54), 0.66);
 
       const windowWidth = Math.max(12 * sx, Math.min(18 * sx, bw * 0.24));
       const windowHeight = 29 * sy;
       const left = bx + bw * 0.19;
       const right = bx + bw * 0.62;
       const top = by + 29 * sy;
-      drawRowhouseWindow(raster, left, top, windowWidth, windowHeight, palette, index === 4, 0);
-      if (bw > 55 * sx) drawRowhouseWindow(raster, right, top + (index % 2) * 2 * sy, windowWidth, windowHeight, palette, index === 3, 0);
-      drawRowhouseWindow(raster, left, top + 55 * sy, windowWidth, windowHeight, palette, index === 1, 0);
-      if (bw > 55 * sx) drawRowhouseWindow(raster, right, top + 55 * sy, windowWidth, windowHeight, palette, index === 3 || index === 5, 0);
+      drawRowhouseWindow(raster, left, top, windowWidth, windowHeight, palette, false, 0);
+      if (bw > 55 * sx) drawRowhouseWindow(raster, right, top + (index % 2) * 2 * sy, windowWidth, windowHeight, palette, false, 0);
+      drawRowhouseWindow(raster, left, top + 55 * sy, windowWidth, windowHeight, palette, false, 0);
+      if (bw > 55 * sx) drawRowhouseWindow(raster, right, top + 55 * sy, windowWidth, windowHeight, palette, false, 0);
 
       if (index % 2 === 1) {
         const fireEscape = scaleColor(palette.windowDark, 0.85);
         raster.line(bx + bw * 0.1, top + 49 * sy, bx + bw * 0.92, top + 49 * sy, fireEscape, Math.max(1, sx), 0.72);
         raster.line(bx + bw * 0.17, top + 47 * sy, bx + bw * 0.13, top + 80 * sy, fireEscape, Math.max(1, sx), 0.62);
         raster.line(bx + bw * 0.84, top + 47 * sy, bx + bw * 0.88, top + 80 * sy, fireEscape, Math.max(1, sx), 0.62);
+      }
+
+      if (index === 1 || index === 4) {
+        const pipeX = bx + bw * 0.84;
+        raster.line(pipeX, by + 8 * sy, pipeX, by + bh, scaleColor(palette.trimShadow, 0.72), Math.max(1, sx * 1.4), 0.72);
+        raster.ellipse(pipeX, by + bh - 2 * sy, 2.2 * sx, 2.2 * sy, shiftColor(palette.trimShadow, 12), 0.62);
       }
     });
 
@@ -535,8 +656,16 @@ function drawExterior(raster, palette, seed, weather, aperture) {
       [738 * sx, 414 * sy], [866 * sx, 438 * sy], [866 * sx, 478 * sy],
       [496 * sx, 478 * sy],
     ], scaleColor(palette.brickDark, 0.78), 0.94);
+    raster.polygon([
+      [514 * sx, 431 * sy], [581 * sx, 419 * sy], [581 * sx, 478 * sy], [510 * sx, 478 * sy],
+    ], scaleColor(palette.brickDark, 0.58), 0.88);
+    raster.polygon([
+      [665 * sx, 441 * sy], [724 * sx, 425 * sy], [724 * sx, 478 * sy], [662 * sx, 478 * sy],
+    ], scaleColor(palette.brickDark, 0.52), 0.9);
     raster.line(501 * sx, 421 * sy, 590 * sx, 408 * sy, shiftColor(palette.brickDark, 25), 2 * sy, 0.55);
     raster.line(590 * sx, 408 * sy, 657 * sx, 433 * sy, shiftColor(palette.brickDark, 22), 2 * sy, 0.48);
+    raster.line(514 * sx, 431 * sy, 581 * sx, 419 * sy, [112, 107, 101], Math.max(1, sy), 0.35);
+    raster.line(665 * sx, 441 * sy, 724 * sx, 425 * sy, [112, 107, 101], Math.max(1, sy), 0.3);
 
     // A sagging utility line is a quiet urban cue, never a visual focal point.
     let lastX = aperture.x;
@@ -550,14 +679,33 @@ function drawExterior(raster, palette, seed, weather, aperture) {
       lastY = nextY;
     }
 
+    // A bare near branch, placed in front of the rowhouses but behind the
+    // glass, gives the low-cost backdrop a strong foreground depth cue.
+    const branch = scaleColor(palette.windowDark, 0.75);
+    raster.line(491 * sx, 438 * sy, 548 * sx, 315 * sy, branch, Math.max(1.4, sx * 2.4), 0.72);
+    raster.line(533 * sx, 347 * sy, 505 * sx, 269 * sy, branch, Math.max(1, sx * 1.5), 0.64);
+    raster.line(534 * sx, 346 * sy, 585 * sx, 277 * sy, branch, Math.max(1, sx * 1.5), 0.64);
+    raster.line(552 * sx, 321 * sy, 604 * sx, 305 * sy, branch, Math.max(0.8, sx), 0.52);
+    raster.line(517 * sx, 382 * sy, 494 * sx, 349 * sy, branch, Math.max(0.8, sx), 0.52);
+
+    if (weather === 'autumn-wind') {
+      const leafPalette = [[181, 105, 42], [202, 149, 62], [142, 70, 38], [211, 167, 73]];
+      for (let leaf = 0; leaf < 5; leaf += 1) {
+        const px = (536 + rng() * 285) * sx;
+        const py = (112 + rng() * 272) * sy;
+        const radius = (2.2 + rng() * 2.3) * Math.min(sx, sy);
+        raster.ellipse(px, py, radius * 1.55, radius * 0.65, leafPalette[leaf % leafPalette.length], 0.68 + rng() * 0.2, 0.22);
+      }
+    }
+
     if (weather === 'rain' || weather === 'nor-easter') {
-      const count = weather === 'nor-easter' ? 118 : 72;
+      const count = weather === 'nor-easter' ? 78 : 42;
       for (let streak = 0; streak < count; streak += 1) {
         const px = x + rng() * width;
         const py = y + rng() * height;
         const length = (5 + rng() * 15) * sy;
         const lean = (weather === 'nor-easter' ? 6 : 2) * sx;
-        raster.line(px, py, px - lean, py + length, [194, 214, 226], Math.max(0.65, sx * 0.7), 0.18 + rng() * 0.2);
+        raster.line(px, py, px - lean, py + length, [177, 199, 212], Math.max(0.6, sx * 0.65), 0.1 + rng() * 0.13);
       }
     }
 
@@ -574,15 +722,31 @@ function drawExterior(raster, palette, seed, weather, aperture) {
       });
     }
 
-    // Cool glass tint and two subdued room reflections retain depth without
-    // flattening the exterior details.
-    raster.rect(x, y, width, height, [68, 100, 126], 0.075);
+    // The dusk glaze establishes the value hierarchy before one restrained
+    // warm window is restored as the exterior focal point.
+    raster.rect(x, y, width, height, [28, 43, 56], 0.17);
+    drawRowhouseWindow(raster, 745 * sx, 371 * sy, 30 * sx, 41 * sy, palette, true, 0);
+
+    // Cool glass tint and layered room reflections place the scene decisively
+    // behind imperfect glass without flattening the exterior details.
+    raster.rect(x, y, width, height, [68, 100, 126], 0.1);
     raster.polygon([
       [511 * sx, 68 * sy], [560 * sx, 68 * sy], [705 * sx, 476 * sy], [663 * sx, 476 * sy],
     ], [225, 198, 154], 0.055);
     raster.polygon([
       [739 * sx, 68 * sy], [768 * sx, 68 * sy], [858 * sx, 330 * sy], [858 * sx, 398 * sy],
     ], [225, 198, 154], 0.04);
+    raster.polygon([
+      [496 * sx, 116 * sy], [508 * sx, 82 * sy], [647 * sx, 476 * sy], [629 * sx, 476 * sy],
+    ], [238, 213, 174], 0.032);
+    raster.polygon([
+      [777 * sx, 68 * sy], [789 * sx, 68 * sy], [865 * sx, 278 * sy], [865 * sx, 319 * sy],
+    ], [224, 201, 163], 0.028);
+    raster.line(500 * sx, 72 * sy, 500 * sx, 472 * sy, [194, 218, 228], Math.max(0.8, sx), 0.16);
+    raster.rect(x, y, 7 * sx, height, [17, 24, 29], 0.18);
+    raster.rect(x + width - 7 * sx, y, 7 * sx, height, [17, 24, 29], 0.2);
+    raster.rect(x, y, width, 5 * sy, [203, 218, 222], 0.055);
+    raster.rect(x, y + height - 7 * sy, width, 7 * sy, [18, 24, 27], 0.15);
   });
 }
 
@@ -699,6 +863,7 @@ function normalizeDimension(value, fallback, name) {
 function normalizeWeather(weather) {
   const normalized = String(weather ?? 'snow').toLowerCase().replace(/[’']/g, '-').replace(/\s+/g, '-');
   if (normalized === 'noreaster' || normalized === 'nor--easter') return 'nor-easter';
+  if (normalized === 'autumn' || normalized === 'fall' || normalized === 'fall-wind') return 'autumn-wind';
   return WEATHER_PRESETS.has(normalized) ? normalized : 'quiet';
 }
 
@@ -730,7 +895,7 @@ function freezePalette(palette) {
  * @param {number} [options.width=960] Texture width in pixels.
  * @param {number} [options.height=640] Texture height in pixels.
  * @param {number} [options.seed=88] Deterministic detail seed.
- * @param {'quiet'|'rain'|'snow'|'nor-easter'} [options.weather='snow'] Static window weather.
+ * @param {'quiet'|'autumn-wind'|'rain'|'snow'|'nor-easter'} [options.weather='snow'] Static window weather.
  * @param {object} [options.palette] Optional named palette overrides.
  * @returns {{texture: THREE.DataTexture, material: THREE.MeshBasicMaterial,
  * width: number, height: number, aspect: number, seed: number, weather: string,

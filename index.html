@@ -6,10 +6,10 @@
     <meta name="theme-color" content="#0b0d0c" />
     <meta name="description" content="A mechanically detailed 3D manual typewriter with physical paper rituals in a Philadelphia writing room." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23090d0c'/%3E%3Cpath d='M12 17h40v25H12zM8 42h48v9H8z' fill='%23d7b36e'/%3E%3Cpath d='M18 23h28v13H18z' fill='%23eee4ce'/%3E%3C/svg%3E" />
-    <title>Meridian No. 88 — Mechanical Typewriter</title>
+    <title>Octoberline 211 — Mechanical Typewriter</title>
   </head>
   <body>
-    <main id="app">
+    <main id="app" class="landing-active">
       <canvas id="scene" tabindex="-1" aria-label="Interactive three-dimensional mechanical typewriter"></canvas>
       <div class="atmosphere" aria-hidden="true"></div>
       <div class="film-grain" aria-hidden="true"></div>
@@ -17,7 +17,7 @@
       <header class="masthead ui-layer">
         <button class="brand-lockup bare-button" id="home-view" aria-label="Return to writer view">
           <span class="brand-kicker">MBS WORKS · PHILADELPHIA</span>
-          <span class="brand-name">MERIDIAN <i>88</i></span>
+          <span class="brand-name"><span>Octoberline</span> <i>211</i></span>
         </button>
         <div class="machine-readout" aria-label="Machine status">
           <div class="readout-cell">
@@ -34,6 +34,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <button class="text-button quiet-mode-toggle" id="quiet-mode-toggle" aria-label="Toggle quiet writing mode" aria-pressed="false">QUIET MODE</button>
           <button class="icon-button" id="sound-toggle" aria-label="Toggle sound" aria-pressed="true" title="Sound">
             <span class="sound-icon">◖))</span>
           </button>
@@ -44,7 +45,10 @@
       <aside class="mechanism-card ui-layer" aria-label="Mechanical status">
         <div class="panel-heading">
           <span>MECHANISM / LIVE</span>
-          <span class="status-lamp" id="status-lamp"></span>
+          <span class="mechanism-heading-actions">
+            <span class="status-lamp" id="status-lamp"></span>
+            <button class="mobile-mechanics-close" id="mobile-mechanics-close" type="button" aria-label="Close mechanical controls">×</button>
+          </span>
         </div>
         <div class="mechanism-row">
           <div class="mechanism-copy"><span>Escapement</span><strong id="escapement-status">DOG ENGAGED</strong></div>
@@ -56,8 +60,25 @@
         </div>
         <div class="mechanism-row">
           <div class="mechanism-copy"><span>Touch force</span><strong id="force-status">MEDIUM</strong></div>
-          <div class="force-dots" aria-hidden="true"><i></i><i class="active"></i><i></i></div>
+          <div class="touch-presets" role="group" aria-label="Key resistance">
+            <button type="button" data-touch-preset="light" aria-label="Light key resistance" aria-pressed="false">L</button>
+            <button type="button" data-touch-preset="medium" aria-label="Medium key resistance" aria-pressed="true">M</button>
+            <button type="button" data-touch-preset="heavy" aria-label="Heavy key resistance" aria-pressed="false">H</button>
+          </div>
         </div>
+        <details class="mechanical-settings">
+          <summary>MARGINS & TABS</summary>
+          <div class="margin-settings">
+            <label><span>LEFT <b id="left-margin-value">00</b></span><input id="left-margin-control" type="range" min="0" max="64" step="1" value="0" /></label>
+            <label><span>RIGHT <b id="right-margin-value">65</b></span><input id="right-margin-control" type="range" min="1" max="65" step="1" value="65" /></label>
+          </div>
+          <div class="tab-settings">
+            <span id="tab-stop-summary">TABS · 08 / 16 / 24 / 32 / 40 / 48 / 56 / 64</span>
+            <button id="toggle-tab-stop" type="button">TOGGLE TAB HERE</button>
+            <button id="reset-tab-stops" type="button">RESET 8-COLUMN TABS</button>
+          </div>
+          <small>Drag the brass stops on the carriage, or use these keyboard-accessible controls.</small>
+        </details>
         <button class="inspection-toggle" id="inspection-toggle" aria-pressed="false">
           <span class="inspection-icon">⌁</span>
           <span><b>INSPECTION MODE</b><small>Reveal linkages & escapement</small></span>
@@ -66,10 +87,22 @@
 
       <nav class="view-dial ui-layer" aria-label="Camera views">
         <span class="dial-label">VIEW</span>
-        <button data-view="writer" class="view-button active" aria-label="Writer view"><span>01</span><b>WRITER</b></button>
-        <button data-view="mechanism" class="view-button" aria-label="Mechanism view"><span>02</span><b>ACTION</b></button>
-        <button data-view="ribbon" class="view-button" aria-label="Ribbon view"><span>03</span><b>RIBBON</b></button>
-        <button data-view="carriage" class="view-button" aria-label="Carriage view"><span>04</span><b>CARRIAGE</b></button>
+        <label class="mobile-view-menu" for="mobile-view-select">
+          <span>VIEW</span>
+          <select id="mobile-view-select" aria-label="Camera view">
+            <option value="writer">Writer</option>
+            <option value="front">Front</option>
+            <option value="mechanism">Action</option>
+            <option value="ribbon">Ribbon</option>
+            <option value="carriage">Carriage</option>
+          </select>
+        </label>
+        <button class="mobile-mechanics-toggle" id="mobile-mechanics-toggle" type="button" aria-expanded="false">MECHANICS</button>
+        <button data-view="writer" class="view-button active" aria-label="Writer view" aria-pressed="true"><span>01</span><b>WRITER</b></button>
+        <button data-view="front" class="view-button" aria-label="Wide front view" aria-pressed="false"><span>02</span><b>FRONT</b></button>
+        <button data-view="mechanism" class="view-button" aria-label="Mechanism view" aria-pressed="false"><span>03</span><b>ACTION</b></button>
+        <button data-view="ribbon" class="view-button" aria-label="Ribbon view" aria-pressed="false"><span>04</span><b>RIBBON</b></button>
+        <button data-view="carriage" class="view-button" aria-label="Carriage view" aria-pressed="false"><span>05</span><b>CARRIAGE</b></button>
       </nav>
 
       <section class="ink-selector ui-layer" aria-label="Ribbon color selector">
@@ -79,37 +112,45 @@
         <button data-ink="stencil" class="ink-button stencil" aria-label="Stencil, no ink" aria-pressed="false" title="Stencil / no ink"></button>
       </section>
 
-      <section class="environment-card ui-layer" aria-label="Writing room atmosphere">
-        <div class="panel-heading"><span>PHILADELPHIA / EARLY EVENING</span><span class="weather-mark" aria-hidden="true">❄</span></div>
-        <div class="environment-fields">
-          <label><span>WEATHER</span>
-            <select id="weather-select">
-              <option value="quiet">Quiet</option>
-              <option value="rain">Rain</option>
-              <option value="snow">Snow</option>
-              <option value="nor-easter">Nor’easter</option>
-            </select>
-          </label>
-          <label><span>UNEASE</span>
-            <select id="unease-select">
-              <option value="off">Off</option>
-              <option value="subtle">Subtle</option>
-              <option value="unsettling">Unsettling</option>
-            </select>
-          </label>
+      <details class="environment-card ui-layer" aria-label="Writing room atmosphere">
+        <summary class="environment-summary">
+          <span class="environment-place">PHILADELPHIA / EARLY EVENING</span>
+          <strong id="environment-summary">AUTUMN WIND / SUBTLE</strong>
+          <span class="weather-mark" aria-hidden="true">⌁</span>
+        </summary>
+        <div class="environment-content">
+          <div class="environment-fields">
+            <label><span>WEATHER</span>
+              <select id="weather-select">
+                <option value="quiet">Clear Dusk</option>
+                <option value="autumn-wind">Autumn Wind</option>
+                <option value="rain">Steady Rain</option>
+                <option value="snow">First Snow</option>
+                <option value="nor-easter">Nor’easter</option>
+              </select>
+            </label>
+            <label><span>UNEASE</span>
+              <select id="unease-select">
+                <option value="off">Off</option>
+                <option value="subtle">Subtle</option>
+                <option value="unsettling">Unsettling</option>
+              </select>
+            </label>
+          </div>
+          <button class="atmosphere-pause" id="atmosphere-pause" type="button" aria-pressed="false"><span>ATMOSPHERE MOTION</span><b>RUNNING</b></button>
+          <details class="audio-mix">
+            <summary>AUDIO MIX</summary>
+            <label><span>Machine</span><input id="machine-volume" type="range" min="0" max="1" step="0.01" /></label>
+            <label><span>Paper</span><input id="paper-volume" type="range" min="0" max="1" step="0.01" /></label>
+            <label><span>Room</span><input id="room-volume" type="range" min="0" max="1" step="0.01" /></label>
+            <label><span>Weather</span><input id="weather-volume" type="range" min="0" max="1" step="0.01" /></label>
+            <label><span>Unease</span><input id="unease-volume" type="range" min="0" max="1" step="0.01" /></label>
+          </details>
         </div>
-        <details class="audio-mix">
-          <summary>AUDIO MIX</summary>
-          <label><span>Machine</span><input id="machine-volume" type="range" min="0" max="1" step="0.01" /></label>
-          <label><span>Paper</span><input id="paper-volume" type="range" min="0" max="1" step="0.01" /></label>
-          <label><span>Room</span><input id="room-volume" type="range" min="0" max="1" step="0.01" /></label>
-          <label><span>Weather</span><input id="weather-volume" type="range" min="0" max="1" step="0.01" /></label>
-          <label><span>Unease</span><input id="unease-volume" type="range" min="0" max="1" step="0.01" /></label>
-        </details>
-      </section>
+      </details>
 
       <section class="document-tray ui-layer" aria-label="Document controls">
-        <button class="tray-handle" id="document-toggle" aria-expanded="false">
+        <button class="tray-handle" id="document-toggle" aria-expanded="false" aria-controls="document-content">
           <span class="paper-stack-icon">▤</span>
           <span><b>DOCUMENT</b><small id="document-summary">Blank sheet loaded</small></span>
           <span class="tray-chevron">⌃</span>
@@ -140,6 +181,21 @@
               <button id="empty-wastebasket" class="danger-subtle" hidden>EMPTY WASTEBASKET</button>
             </div>
           </div>
+          <section class="paper-desk" aria-labelledby="paper-desk-title">
+            <div class="paper-desk-heading">
+              <div><span class="field-label">PAPER DESK</span><h3 id="paper-desk-title">Loaded, loose, filed, and discarded sheets</h3></div>
+              <span id="paper-desk-count">01 SHEET</span>
+            </div>
+            <div class="paper-desk-list" id="paper-desk-list" aria-label="Saved and physical sheets"></div>
+            <p class="paper-desk-preview" id="paper-desk-preview" role="status" aria-live="polite">Select a sheet to preview or export it.</p>
+            <div class="paper-export-controls">
+              <label><span>APPEARANCE</span><select id="paper-export-appearance"><option value="original">Original ink</option><option value="carbon-copy">Carbon copy</option></select></label>
+              <label><span>RESOLUTION</span><select id="paper-export-resolution"><option value="1">1× · 151 DPI</option><option value="2" selected>2× · 301 DPI</option><option value="4">4× · 602 DPI</option></select></label>
+              <label><span>FORMAT</span><select id="paper-export-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></label>
+              <button id="export-selected-paper" type="button">SAVE SELECTED</button>
+              <button id="print-selected-paper" type="button">PRINT / SAVE PDF</button>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -147,6 +203,29 @@
         <span>TYPE ON PAPER</span>
         <textarea id="mobile-input" rows="1" inputmode="text" enterkeyhint="enter" autocapitalize="sentences" autocomplete="off" spellcheck="false" placeholder="Tap, then type…" aria-label="Mobile typewriter keyboard"></textarea>
       </label>
+
+      <div class="input-state ui-layer" id="input-state" role="status" aria-live="polite" aria-atomic="true">
+        <i aria-hidden="true"></i><span id="input-status">INPUT RELEASED</span>
+      </div>
+
+      <aside class="first-sheet-coach ui-layer" id="first-sheet-coach" role="region" aria-labelledby="coach-title" hidden>
+        <header>
+          <span>FIRST SHEET · <b id="coach-progress">01 / 05</b></span>
+          <button id="coach-dismiss" type="button" aria-label="Dismiss first-sheet guide">×</button>
+        </header>
+        <h2 id="coach-title">Let the machine answer.</h2>
+        <ol>
+          <li class="active" data-coach-action="type"><b>01</b><span>Strike any letter and watch its typebar meet the ribbon.</span></li>
+          <li data-coach-action="shift"><b>02</b><span>Hold Shift for a capital. The entire basket moves.</span></li>
+          <li data-coach-action="return"><b>03</b><span>Press Enter to return the carriage and feed one line.</span></li>
+          <li data-coach-action="bell"><b>04</b><span>The bell sounds five spaces before the right margin.</span></li>
+          <li data-coach-action="release"><b>05</b><span>Open Document and release the sheet when the page is ready.</span></li>
+        </ol>
+        <div class="coach-actions">
+          <button id="coach-next" type="button">NEXT</button>
+          <button id="coach-skip" type="button">SKIP GUIDE</button>
+        </div>
+      </aside>
 
       <footer class="key-legend ui-layer">
         <div><kbd>TYPE</kbd><span>STRIKE KEYS</span></div>
@@ -163,44 +242,56 @@
       <div class="toast ui-layer" id="toast" role="status" aria-live="polite"></div>
       <div class="sr-only" id="screen-reader-status" aria-live="polite"></div>
 
-      <section class="intro-overlay ui-layer" id="intro-overlay" role="dialog" aria-modal="true" aria-labelledby="intro-title">
-        <div class="intro-rule"></div>
-        <div class="intro-content">
-          <span class="intro-index">A MECHANICAL STUDY · 1938 / 2026</span>
-          <h1 id="intro-title">Every letter<br /><em>leaves a mark.</em></h1>
-          <p>An obsessively detailed mechanical writing instrument at a Philadelphia rowhouse desk. Your keyboard drives its keys, typebars, ribbon, escapement, carriage, ink, and paper.</p>
-          <button class="enter-button" id="enter-studio" autofocus>
-            <span>SIT AT THE MACHINE</span><i>→</i>
-          </button>
-          <small>Sound begins after entry · Headphones recommended</small>
+      <section class="intro-overlay ui-layer" id="intro-overlay" role="dialog" aria-modal="true" aria-labelledby="intro-title" aria-describedby="intro-description intro-sound-note">
+        <div class="intro-scene-grade" aria-hidden="true"></div>
+        <div class="intro-window-wash" aria-hidden="true"></div>
+
+        <div class="intro-carbon-brand" aria-label="Octoberline 211">
+          <span>Octoberline</span> <b>211</b>
         </div>
-        <div class="intro-mechanics" aria-hidden="true">
-          <span>KEY</span><i></i><span>LINK</span><i></i><span>TYPEBAR</span><i></i><span>IMPRESSION</span><i></i><span>ESCAPEMENT</span>
+
+        <div class="intro-content">
+          <span class="intro-index">PHILADELPHIA · EARLY EVENING</span>
+          <h1 id="intro-title">A room for <br />the next page.</h1>
+          <p id="intro-description">A mechanical writing experience built one key, bell, ribbon, and carriage at a time.</p>
+          <div class="intro-actions">
+            <button class="enter-button" id="enter-studio" type="button" autofocus>
+              <span>SIT AT THE MACHINE</span><i>→</i>
+            </button>
+            <button class="intro-guide-button" id="intro-guide" type="button">SEE HOW IT WORKS</button>
+          </div>
+          <small id="intro-sound-note">Sound begins after entry · Reduced motion available</small>
+        </div>
+
+        <div class="intro-atmosphere" aria-hidden="true">
+          <span>OCTOBER WIND</span><i></i><span>18—22 SEC / IRREGULAR</span>
         </div>
       </section>
 
       <dialog class="field-guide ui-layer" id="field-guide">
         <form method="dialog" class="guide-shell">
           <header class="guide-header">
-            <div><span>OPERATOR'S MANUAL</span><h2>MERIDIAN No. 88</h2></div>
+            <div><span>OPERATOR'S MANUAL</span><h2>OCTOBERLINE 211</h2></div>
             <button class="guide-close" value="close" aria-label="Close field guide">×</button>
           </header>
           <div class="guide-tabs" role="tablist">
-            <button type="button" class="guide-tab active" data-tab="operation">OPERATION</button>
-            <button type="button" class="guide-tab" data-tab="mechanics">HOW IT WORKS</button>
-            <button type="button" class="guide-tab" data-tab="research">RESEARCH</button>
+            <button type="button" class="guide-tab active" id="guide-tab-operation" role="tab" aria-selected="true" aria-controls="guide-page-operation" data-tab="operation">OPERATION</button>
+            <button type="button" class="guide-tab" id="guide-tab-mechanics" role="tab" aria-selected="false" aria-controls="guide-page-mechanics" tabindex="-1" data-tab="mechanics">HOW IT WORKS</button>
+            <button type="button" class="guide-tab" id="guide-tab-research" role="tab" aria-selected="false" aria-controls="guide-page-research" tabindex="-1" data-tab="research">RESEARCH</button>
+            <button type="button" class="guide-tab" id="guide-tab-future" role="tab" aria-selected="false" aria-controls="guide-page-future" tabindex="-1" data-tab="future">COMING SOON</button>
           </div>
-          <div class="guide-page active" data-page="operation">
+          <div class="guide-page active" id="guide-page-operation" role="tabpanel" aria-labelledby="guide-tab-operation" data-page="operation">
             <div class="manual-grid">
               <article><span class="manual-number">01</span><h3>Write</h3><p>Type on your physical keyboard or click the modeled keys. Shift selects the upper character; Caps Lock holds the type basket in its shifted position.</p></article>
               <article><span class="manual-number">02</span><h3>Return</h3><p>Press Enter to sweep the carriage to the left margin. The return lever indexes the platen one line and feeds the paper upward.</p></article>
               <article><span class="manual-number">03</span><h3>Correct</h3><p>Backspace reverses the escapement by one tooth. Like a real machine, it does not erase ink: type again to create an overstrike.</p></article>
               <article><span class="manual-number">04</span><h3>Handle Paper</h3><p>Release a finished sheet, then file it in the visible manuscript tray, deliberately crumple it, or reinsert it. Discards remain recoverable until you empty the basket.</p></article>
               <article><span class="manual-number">05</span><h3>Inspect</h3><p>Use the numbered views or enable Inspection Mode for a constrained close look at the universal bar, key links, escapement, and bell.</p></article>
-              <article><span class="manual-number">06</span><h3>Set the Room</h3><p>Choose quiet weather, rain, snow, or a nor’easter. Unease is optional, restrained, and never interrupts the act of writing.</p></article>
+              <article><span class="manual-number">06</span><h3>Set the Room</h3><p>Choose clear dusk, autumn wind, steady rain, first snow, or a nor’easter. Unease is optional, restrained, and never interrupts the act of writing.</p></article>
             </div>
+            <button class="guide-coach-launch" id="coach-open" type="button">START THE FIRST-SHEET GUIDE</button>
           </div>
-          <div class="guide-page" data-page="mechanics">
+          <div class="guide-page" id="guide-page-mechanics" role="tabpanel" aria-labelledby="guide-tab-mechanics" data-page="mechanics" hidden>
             <ol class="action-chain">
               <li><b>KEY LEVER</b><span>The key descends and pulls a mechanical link.</span></li>
               <li><b>TYPEBAR</b><span>The link accelerates one bar through the slotted segment toward the printing point.</span></li>
@@ -210,8 +301,8 @@
               <li><b>RIBBON FEED</b><span>Each stroke winds a fraction of ribbon onto one spool. End eyelets reverse the drive before the inked length runs out.</span></li>
             </ol>
           </div>
-          <div class="guide-page" data-page="research">
-            <p class="research-lede">The Meridian is a fictional composite whose action follows documented manual mechanisms. Its writing-room identity is informed by Philadelphia's active repair, restoration, and public typewriter culture.</p>
+          <div class="guide-page" id="guide-page-research" role="tabpanel" aria-labelledby="guide-tab-research" data-page="research" hidden>
+            <p class="research-lede">Octoberline 211 is a fictional composite whose action follows documented manual mechanisms. Its writing-room identity is informed by Philadelphia's active repair, restoration, and public typewriter culture.</p>
             <ul class="source-list">
               <li><a href="https://site.xavier.edu/polt/typewriters/IBMservice1939.pdf" target="_blank" rel="noreferrer"><span>01</span><b>1939 Mechanical Manual</b><small>Universal bar, type action, and escapement</small></a></li>
               <li><a href="https://patents.google.com/patent/US2212435A/en" target="_blank" rel="noreferrer"><span>02</span><b>Carriage Escapement Patent</b><small>Pawls, wheel, shift, and letter spacing</small></a></li>
@@ -219,9 +310,29 @@
               <li><a href="https://patents.google.com/patent/US2021195A/en" target="_blank" rel="noreferrer"><span>04</span><b>Line Spacer Patent</b><small>Platen ratchet and carriage-return feed</small></a></li>
               <li><a href="https://site.xavier.edu/polt/typewriters/tw-faq.html" target="_blank" rel="noreferrer"><span>05</span><b>Ribbon Reference</b><small>Half-inch dual-color ribbons and automatic reverse eyelets</small></a></li>
               <li><a href="https://www.phillytypewriter.com/community.html" target="_blank" rel="noreferrer"><span>06</span><b>Philadelphia Typewriter Community</b><small>Public machines, repair education, youth participation, and type-ins</small></a></li>
+              <li><a href="https://www.pecoconnection.com/2020/11/10/powering-on-pecos-iconic-crown-lights/" target="_blank" rel="noreferrer"><span>07</span><b>PECO Crown Lights</b><small>Current color display, animation, and Philadelphia landmark history</small></a></li>
+              <li><a href="https://www.pscosigngroup.com/client-results/peco/" target="_blank" rel="noreferrer"><span>08</span><b>Crown Lights Specifications</b><small>Wrapped faces, programmable LED columns, scale, and ventilation gaps</small></a></li>
             </ul>
           </div>
-          <footer class="guide-footer"><span>SIMULATION BUILD 0.2</span><span>DESIGNED FOR PHYSICAL KEYBOARDS + POINTER</span></footer>
+          <div class="guide-page" id="guide-page-future" role="tabpanel" aria-labelledby="guide-tab-future" data-page="future" hidden>
+            <p class="research-lede">The private desk comes first. These visual concept previews show how Octoberline may eventually grow without pretending that accounts, submissions, or publishing work today.</p>
+            <div class="future-room-grid">
+              <a href="./coming-soon/community/" target="_blank" rel="noreferrer">
+                <span>PHASE 06 · CONCEPT PREVIEW</span>
+                <strong>Every machine carries a second story.</strong>
+                <p>Machine histories, restoration records, photographs, and permissioned sounds from Philadelphia owners and repairers.</p>
+                <b>VIEW COMMUNITY MACHINE PROFILES <i>→</i></b>
+              </a>
+              <a href="./coming-soon/writing-board/" target="_blank" rel="noreferrer">
+                <span>PHASE 07 · CONCEPT PREVIEW</span>
+                <strong>Pages leave the desk only when you choose.</strong>
+                <p>A private-first public writing board with pseudonyms, categories, ownership controls, moderation, and deliberate publishing.</p>
+                <b>VIEW THE WRITING BOARD <i>→</i></b>
+              </a>
+            </div>
+            <p class="future-disclosure"><b>NOT ACTIVE:</b> No account, upload, submission, cloud storage, or public-posting service is connected.</p>
+          </div>
+          <footer class="guide-footer"><span>SIMULATION BUILD 0.2</span><span>ESC OR CLICK OUTSIDE TO CLOSE</span></footer>
         </form>
       </dialog>
     </main>

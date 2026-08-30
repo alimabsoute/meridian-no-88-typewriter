@@ -24,18 +24,18 @@ async function verifyStandaloneFile() {
     await page.goto(targetUrl, { waitUntil: 'load' });
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => Boolean(window.__MERIDIAN__));
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__));
     await page.click('#enter-studio');
     await page.keyboard.type('Offline proof.', { delay: 12 });
-    await page.waitForFunction(() => !window.__MERIDIAN__.model.busy);
+    await page.waitForFunction(() => !window.__OCTOBERLINE_211__.model.busy);
     await page.waitForTimeout(650); // Allow the idle persistence checkpoint to commit.
 
-    const typed = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
+    const typed = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
     if (typed !== 'Offline proof.') throw new Error(`Direct-file typing mismatch: ${JSON.stringify(typed)}`);
 
     await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => Boolean(window.__MERIDIAN__));
-    const restored = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__));
+    const restored = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
     if (restored !== typed) throw new Error(`Direct-file persistence mismatch: ${JSON.stringify(restored)}`);
     if (externalRequests.length) throw new Error(`Standalone build made external requests: ${externalRequests.join(' | ')}`);
     if (errors.length) throw new Error(`Direct-file browser errors: ${errors.join(' | ')}`);
@@ -53,7 +53,7 @@ async function verifyWebglFallback() {
     await page.getByText('WEBGL 2 REQUIRED').waitFor({ state: 'visible', timeout: 30000 });
     const fallback = await page.evaluate(() => ({
       messageVisible: document.body.innerText.includes('WEBGL 2 REQUIRED'),
-      simulatorStarted: Boolean(window.__MERIDIAN__),
+      simulatorStarted: Boolean(window.__OCTOBERLINE_211__),
     }));
     if (!fallback.messageVisible || fallback.simulatorStarted) {
       throw new Error(`WebGL fallback mismatch: ${JSON.stringify(fallback)}`);

@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+import {
+  PAPER_EXPORT_BASE_HEIGHT,
+  PAPER_EXPORT_BASE_WIDTH,
+  createBrowserPrintPayload as buildBrowserPrintPayload,
+  getPaperExportDimensions,
+  normalizePaperExportOptions,
+} from './paper-export.js';
 
 export function seededRandom(seed) {
   let value = seed >>> 0;
@@ -80,32 +87,33 @@ export function makeRectLabelTexture(label) {
 
 export function makeBadgeTexture() {
   const canvas = document.createElement('canvas');
-  // One-line wordmark for the low front rail (13.25:1 display aspect).
-  // The former two-line 4:1 badge became stretched when the collision-prone
-  // tall apron was replaced by an authentic open keyboard bay.
+  // The approved Carbon Mark remains a one-line decal on the low front rail.
+  // Its soft typewriter face and slightly doubled ink impression distinguish it
+  // from the condensed mechanical labels used elsewhere on the machine.
   canvas.width = 2120;
   canvas.height = 160;
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = '#c19a56';
-  context.lineWidth = 6;
-  context.strokeRect(10, 10, 2100, 140);
-  context.strokeStyle = 'rgba(193,154,86,.45)';
-  context.lineWidth = 2;
-  context.strokeRect(21, 21, 2078, 118);
-  context.fillStyle = '#d5b16f';
+  context.fillStyle = 'rgba(229,219,194,.2)';
   context.textAlign = 'left';
   context.textBaseline = 'middle';
-  context.font = '104px "Bebas Neue", sans-serif';
-  context.letterSpacing = '18px';
-  context.fillText('MERIDIAN', 70, 84);
-  context.fillStyle = 'rgba(193,154,86,.72)';
-  context.fillRect(1525, 38, 2, 84);
-  context.textAlign = 'center';
-  context.font = '46px "Special Elite", monospace';
-  context.letterSpacing = '5px';
-  context.fillStyle = '#bca16f';
-  context.fillText('No. 88', 1815, 86);
+  context.font = '112px "Special Elite", "Courier New", monospace';
+  context.letterSpacing = '-4px';
+  const carbonNameWidth = context.measureText('Octoberline').width;
+  const carbonNumberWidth = context.measureText('211').width;
+  const carbonStart = (canvas.width - carbonNameWidth - carbonNumberWidth - 54) / 2;
+  context.fillText('Octoberline', carbonStart + 2, 87);
+  context.fillStyle = '#e5dbc2';
+  context.fillText('Octoberline', carbonStart, 84);
+
+  context.save();
+  context.translate(carbonStart + carbonNameWidth + 54, 83);
+  context.rotate(-0.025);
+  context.fillStyle = 'rgba(197,107,56,.24)';
+  context.fillText('211', 3, 3);
+  context.fillStyle = '#c56b38';
+  context.fillText('211', 0, 0);
+  context.restore();
   return canvasTexture(canvas);
 }
 
@@ -210,8 +218,8 @@ export function makeCrinkleTexture() {
 
 export class PaperRenderer {
   constructor(documentState) {
-    this.width = 1280;
-    this.height = 1656;
+    this.width = PAPER_EXPORT_BASE_WIDTH;
+    this.height = PAPER_EXPORT_BASE_HEIGHT;
     this.displayScale = 0.6;
     this.displayWidth = Math.round(this.width * this.displayScale);
     this.displayHeight = Math.round(this.height * this.displayScale);
@@ -290,6 +298,54 @@ export class PaperRenderer {
     context.fillRect(0, 0, this.width, 3);
   }
 
+  drawExportPaperToContext(context, scale, appearance) {
+    const width = PAPER_EXPORT_BASE_WIDTH * scale;
+    const height = PAPER_EXPORT_BASE_HEIGHT * scale;
+    const gradient = context.createLinearGradient(0, 0, width, height);
+    if (appearance === 'carbon-copy') {
+      gradient.addColorStop(0, '#e9e8de');
+      gradient.addColorStop(0.52, '#dfdfd5');
+      gradient.addColorStop(1, '#d4d5ce');
+    } else {
+      gradient.addColorStop(0, '#eee5cf');
+      gradient.addColorStop(0.48, '#e9dec5');
+      gradient.addColorStop(1, '#dcd0b7');
+    }
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, width, height);
+
+    const random = seededRandom(24681357 + this.document.sheetNumber);
+    const fiberCount = Math.round(7200 * scale * scale);
+    for (let index = 0; index < fiberCount; index += 1) {
+      const alpha = appearance === 'carbon-copy'
+        ? 0.01 + random() * 0.018
+        : 0.018 + random() * 0.026;
+      if (appearance === 'carbon-copy') {
+        context.strokeStyle = random() > 0.5
+          ? `rgba(69,76,91,${alpha})`
+          : `rgba(255,255,250,${alpha})`;
+      } else {
+        context.strokeStyle = random() > 0.48
+          ? `rgba(115,92,58,${alpha})`
+          : `rgba(255,255,242,${alpha})`;
+      }
+      context.lineWidth = (random() * 0.8 + 0.2) * scale;
+      const x = random() * width;
+      const y = random() * height;
+      context.beginPath();
+      context.moveTo(x, y);
+      context.lineTo(x + (3 + random() * 15) * scale, y + (random() - 0.5) * 2 * scale);
+      context.stroke();
+    }
+
+    context.fillStyle = appearance === 'carbon-copy'
+      ? 'rgba(55, 62, 78, .035)'
+      : 'rgba(120, 95, 55, .055)';
+    context.fillRect(0, 0, 4 * scale, height);
+    context.fillRect(width - 4 * scale, 0, 4 * scale, height);
+    context.fillRect(0, 0, width, 3 * scale);
+  }
+
   syncDisplayPaper() {
     this.displayContext.clearRect(0, 0, this.displayWidth, this.displayHeight);
     this.displayContext.drawImage(this.canvas, 0, 0, this.displayWidth, this.displayHeight);
@@ -364,6 +420,45 @@ export class PaperRenderer {
     return this.impressionBounds(mark, scale, context.canvas.width, context.canvas.height);
   }
 
+  drawCarbonImpressionToContext(mark, context, scale = 1) {
+    const { x, y } = this.impressionCoordinates(mark, scale);
+    const random = seededRandom(mark.seed);
+    const force = Math.max(0.25, Math.min(1, mark.force ?? 0.72));
+    const rotation = (random() - 0.5) * 0.026;
+    const jitterX = (random() - 0.5) * 2.1 * scale;
+    const jitterY = (random() - 0.5) * 1.7 * scale;
+    context.save();
+    context.translate(x + jitterX, y + jitterY);
+    context.rotate(rotation);
+    context.textAlign = 'center';
+    context.textBaseline = 'alphabetic';
+    context.font = `${26 * scale}px "Special Elite", "Courier New", monospace`;
+
+    const color = mark.ink === 'red' ? [109, 57, 67] : [35, 43, 61];
+    const opacity = mark.ink === 'stencil' ? 0.07 + force * 0.07 : 0.3 + force * 0.33;
+    context.fillStyle = `rgba(${color.join(',')}, ${opacity})`;
+    context.fillText(mark.character, 0, 0);
+    context.globalCompositeOperation = 'multiply';
+    context.fillStyle = `rgba(${color.join(',')}, ${0.07 + random() * 0.07})`;
+    context.fillText(
+      mark.character,
+      (0.55 + (random() - 0.5) * 1.8) * scale,
+      (0.35 + (random() - 0.5) * 1.2) * scale,
+    );
+    context.globalCompositeOperation = 'destination-out';
+    for (let speck = 0; speck < 7; speck += 1) {
+      context.globalAlpha = 0.09 + random() * 0.16;
+      context.fillRect(
+        (random() - 0.5) * 11 * scale,
+        (-8 + random() * 16) * scale,
+        (0.6 + random() * 1.2) * scale,
+        (0.5 + random()) * scale,
+      );
+    }
+    context.restore();
+    return this.impressionBounds(mark, scale, context.canvas.width, context.canvas.height);
+  }
+
   updateDisplayTexture(region) {
     if (!this.texture || !region.width || !region.height) return;
     if (!this.textureReady) {
@@ -417,10 +512,58 @@ export class PaperRenderer {
     };
   }
 
-  download(filename) {
+  /**
+   * Render an export on demand. The default path returns the exact live paper
+   * canvas used before export options existed, preserving the current PNG.
+   */
+  renderExportCanvas(options = {}) {
+    const normalized = normalizePaperExportOptions(options);
+    if (normalized.resolutionScale === 1 && normalized.appearance === 'original') {
+      return this.canvas;
+    }
+
+    const dimensions = getPaperExportDimensions(normalized);
+    const canvas = document.createElement('canvas');
+    canvas.width = dimensions.width;
+    canvas.height = dimensions.height;
+    const context = canvas.getContext('2d');
+    this.drawExportPaperToContext(context, normalized.resolutionScale, normalized.appearance);
+    for (const mark of this.document.marks) {
+      if (normalized.appearance === 'carbon-copy') {
+        this.drawCarbonImpressionToContext(mark, context, normalized.resolutionScale);
+      } else {
+        this.drawImpressionToContext(mark, context, normalized.resolutionScale);
+      }
+    }
+    return canvas;
+  }
+
+  toDataURL(options = {}) {
+    const normalized = normalizePaperExportOptions(options);
+    const canvas = this.renderExportCanvas(normalized);
+    // PNG has no quality setting. Keeping this one-argument call also preserves
+    // the pre-options default export behavior exactly.
+    return normalized.mimeType === 'image/png'
+      ? canvas.toDataURL('image/png')
+      : canvas.toDataURL(normalized.mimeType, normalized.quality);
+  }
+
+  createBrowserPrintPayload(options = {}) {
+    const normalized = normalizePaperExportOptions({
+      ...options,
+      resolutionScale: options.resolutionScale ?? 2,
+    });
+    const imageDataUrl = this.toDataURL(normalized);
+    return buildBrowserPrintPayload(imageDataUrl, {
+      ...normalized,
+      title: options.title,
+    });
+  }
+
+  download(filename, options = {}) {
     const link = document.createElement('a');
     link.download = filename;
-    link.href = this.canvas.toDataURL('image/png');
+    link.href = this.toDataURL(options);
     link.click();
   }
 }

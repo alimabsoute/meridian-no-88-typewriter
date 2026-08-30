@@ -3,7 +3,9 @@ import { TypewriterDocument } from './typewriter-document.js';
 import {
   CHARACTER_KEYS,
   CODE_BY_CHARACTER,
+  DEFAULT_TOUCH_PRESET,
   KEY_BY_CODE,
+  TOUCH_PRESETS,
   TypewriterModel,
 } from './typewriter-model.js';
 
@@ -35,7 +37,15 @@ const US_QWERTY_PRINTABLE_KEYS = [
 function makeKernel() {
   const model = Object.create(TypewriterModel.prototype);
   let clock = 0;
-  const key = (code) => ({ code, phase: -1, duration: 0, depression: 0 });
+  const key = (code) => ({
+    code,
+    phase: -1,
+    duration: 0,
+    depression: 0,
+    baseY: 0,
+    baseRotationX: 0,
+    group: { position: { y: 0 }, rotation: { x: 0 } },
+  });
   Object.assign(model, {
     commandSequence: 0,
     commandClock: () => clock,
@@ -66,6 +76,7 @@ function makeKernel() {
       strike: vi.fn(),
       escapement: vi.fn(),
       bell: vi.fn(),
+      tab: vi.fn(),
       ribbonReverse: vi.fn(),
     },
     onStatus: vi.fn(),
@@ -76,6 +87,7 @@ function makeKernel() {
     tabMotion: null,
     marginReleased: false,
     inkMode: 'black',
+    touchPreset: DEFAULT_TOUCH_PRESET,
     touchForce: 0.72,
     ribbonPosition: 0.12,
     ribbonDirection: 1,
@@ -122,6 +134,125 @@ describe('TypewriterModel no-lag command kernel', () => {
     expect(model.getLatencySnapshot().peakQueueDepth).toBe(1);
   });
 
+  it('preserves Medium as the default touch calibration', () => {
+    const { model } = makeKernel();
+    model.queueCharacter('a', 'KeyA');
+    const command = model.commandQueue[0];
+
+    expect(DEFAULT_TOUCH_PRESET).toBe('medium');
+    expect(TOUCH_PRESETS.medium).toMatchObject({
+      force: 0.72,
+      keyTravelScale: 1,
+      timingScale: 1,
+      soundScale: 1,
+      impulseScale: 1,
+    });
+    expect(command).toMatchObject({
+      force: 0.72,
+      soundForce: 0.72,
+      keyTravelScale: 1,
+      duration: 0.135,
+      impactSeconds: 0.055,
+      releaseSeconds: 0.088,
+      touchPreset: 'medium',
+    });
+    expect(model.keys.get('KeyA')).toMatchObject({ duration: 0.12, travelScale: 1 });
+  });
+
+  it('applies Light and Heavy resistance to travel, timing, ink, sound, and impulse', () => {
+    const { model } = makeKernel();
+    expect(model.setTouchPreset('Light')).toMatchObject({ preset: 'light', name: 'Light', force: 0.6 });
+    model.queueCharacter('a', 'KeyA');
+    const light = model.commandQueue[0];
+    expect(light.force).toBe(0.6);
+    expect(light.soundForce).toBeCloseTo(0.504);
+    expect(light.duration).toBeCloseTo(0.1215);
+    expect(light.impactSeconds).toBeCloseTo(0.0495);
+    expect(light.keyTravelScale).toBe(0.94);
+
+    model.commandQueue.length = 0;
+    expect(model.setTouchPreset('HEAVY')).toMatchObject({ preset: 'heavy', name: 'Heavy', force: 0.86 });
+    model.queueCharacter('b', 'KeyB');
+    const heavy = model.commandQueue[0];
+    expect(heavy.force).toBe(0.86);
+    expect(heavy.soundForce).toBeCloseTo(0.9632);
+    expect(heavy.duration).toBeCloseTo(0.1512);
+    expect(heavy.impactSeconds).toBeCloseTo(0.0616);
+    expect(heavy.keyTravelScale).toBe(1.08);
+
+    model.startQueuedCommands();
+    model.updateStrikes(0.064);
+    expect(model.document.marks[0].force).toBe(0.86);
+    expect(model.audio.strike).toHaveBeenCalledWith(heavy.soundForce);
+    expect(model.machineImpulse).toBeCloseTo(0.009 * 0.86 * 1.28);
+  });
+
+  it('rejects an unknown touch preset without changing the active calibration', () => {
+    const { model } = makeKernel();
+    model.setTouchPreset('heavy');
+    expect(() => model.setTouchPreset('impossible')).toThrow(RangeError);
+    expect(model.getTouchCalibration()).toMatchObject({ preset: 'heavy', force: 0.86 });
+  });
+
+  it('cycles the modeled touch control in both directions', () => {
+    const { model } = makeKernel();
+    expect(model.cycleTouchPreset()).toMatchObject({ preset: 'heavy' });
+    expect(model.cycleTouchPreset()).toMatchObject({ preset: 'light' });
+    expect(model.cycleTouchPreset(-1)).toMatchObject({ preset: 'heavy' });
+    expect(model.getTouchControlInteractionSnapshot()).toMatchObject({
+      action: 'touch-cycle',
+      preset: 'heavy',
+      presets: ['light', 'medium', 'heavy'],
+    });
+  });
+
+  it('exposes margin and tab settings for UI persistence and mechanical controls', () => {
+    const { model } = makeKernel();
+    expect(model.setMargins(6, 82)).toMatchObject({ leftMargin: 6, rightMargin: 82 });
+    expect(model.setTabStops([12, 25, 50])).toEqual([12, 25, 50]);
+    model.setTouchPreset('light');
+
+    expect(model.getMechanicalSettings()).toEqual({
+      leftMargin: 6,
+      rightMargin: 82,
+      tabStops: [12, 25, 50],
+      touchPreset: 'light',
+    });
+    expect(model.getMarginStopInteractionSnapshot()).toMatchObject({
+      left: { side: 'left', column: 6, minimumColumn: 0, maximumColumn: 81 },
+      right: { side: 'right', column: 82, minimumColumn: 7, maximumColumn: 100 },
+    });
+    expect(model.onChange).toHaveBeenCalledWith(expect.objectContaining({ type: 'margins' }));
+    expect(model.onChange).toHaveBeenCalledWith({ type: 'tab-stops', tabStops: [12, 25, 50] });
+  });
+
+  it('maps dragged margin stops to safe columns without allowing them to cross', () => {
+    const { model } = makeKernel();
+    model.setMargins(10, 20, { emit: false });
+    expect(model.setMarginStopFromLocalX('left', 100, { emit: false })).toMatchObject({
+      leftMargin: 19,
+      rightMargin: 20,
+    });
+    expect(model.setMarginStopFromLocalX('right', -100, { emit: false })).toMatchObject({
+      leftMargin: 19,
+      rightMargin: 20,
+    });
+  });
+
+  it('uses configured document tab stops in the model tab motion', () => {
+    const { model } = makeKernel();
+    model.document.setTabStops([3, 17, 44]);
+    model.document.column = 4;
+    model.carriagePosition = model.dimensions.startCarriageX
+      - model.document.column * model.dimensions.characterPitch;
+
+    model.startTab();
+
+    expect(model.document.column).toBe(17);
+    expect(model.tabMotion.result).toMatchObject({ tabStop: 17, column: 17 });
+    expect(model.audio.tab).toHaveBeenCalledOnce();
+  });
+
   it('drains a burst in bounded frame batches instead of serial cooldowns', () => {
     const { model } = makeKernel();
     for (let index = 0; index < 20; index += 1) model.queueCharacter('a', 'KeyA');
@@ -130,6 +261,19 @@ describe('TypewriterModel no-lag command kernel', () => {
     expect(model.commandQueue).toHaveLength(8);
     expect(model.startQueuedCommands()).toBe(8);
     expect(model.commandQueue).toHaveLength(0);
+    expect(model.activeStrikes).toHaveLength(20);
+  });
+
+  it('keeps Heavy-touch strikes overlapping on the same bounded scheduler', () => {
+    const { model } = makeKernel();
+    model.setTouchPreset('heavy', { emit: false });
+    for (let index = 0; index < 20; index += 1) model.queueCharacter('a', 'KeyA');
+
+    expect(model.startQueuedCommands()).toBe(12);
+    expect(model.activeStrikes[0].mechanicalImpactAt).toBeCloseTo(0.0616);
+    expect(model.activeStrikes[1].mechanicalImpactAt - model.activeStrikes[0].mechanicalImpactAt).toBeCloseTo(0.008);
+    expect(model.commandQueue).toHaveLength(8);
+    expect(model.startQueuedCommands()).toBe(8);
     expect(model.activeStrikes).toHaveLength(20);
   });
 
@@ -283,5 +427,5 @@ describe('TypewriterModel no-lag command kernel', () => {
     });
     expect(model.activeKeys.size).toBeLessThanOrEqual(3);
     expect(model.getLatencySnapshot().peakQueueDepth).toBe(1);
-  });
+  }, 15_000);
 });

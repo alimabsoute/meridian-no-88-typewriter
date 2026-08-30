@@ -13,6 +13,8 @@ import {
 describe('Philadelphia room atmosphere state', () => {
   it('normalizes external configuration to safe presets', () => {
     expect(normalizeWeatherPreset('RAIN')).toBe('rain');
+    expect(normalizeWeatherPreset('Autumn Wind')).toBe('autumn-wind');
+    expect(normalizeWeatherPreset('fall')).toBe('autumn-wind');
     expect(normalizeWeatherPreset("Nor'easter")).toBe('nor-easter');
     expect(normalizeWeatherPreset('noreaster')).toBe('nor-easter');
     expect(normalizeWeatherPreset('hail')).toBe('quiet');
@@ -31,10 +33,21 @@ describe('Philadelphia room atmosphere state', () => {
     });
   });
 
+  it('models autumn wind as a dry, restrained leaf event', () => {
+    expect(resolveWeatherTargets('autumn-wind')).toEqual({
+      rain: 0,
+      snow: 0,
+      wind: 0.38,
+      cloud: 0.28,
+      leaves: 1,
+    });
+  });
+
   it('keeps automatic weather deterministic and eases between conditions', () => {
     expect(resolveWeatherTargets('automatic', 0, 360)).toMatchObject({ rain: 0, snow: 0 });
     expect(resolveWeatherTargets('automatic', 100, 360)).toMatchObject({ rain: 1, snow: 0 });
     expect(resolveWeatherTargets('automatic', 280, 360)).toMatchObject({ rain: 0, snow: 1 });
+    expect(resolveWeatherTargets('automatic', 100, 360).leaves).toBe(0);
     const transition = resolveWeatherTargets('automatic', 62.5, 360);
     expect(transition.rain).toBeGreaterThan(0);
     expect(transition.rain).toBeLessThan(1);

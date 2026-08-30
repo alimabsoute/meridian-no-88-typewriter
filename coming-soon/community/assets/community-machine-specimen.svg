@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" role="img" aria-labelledby="title desc">
+  <title id="title">Archival typewriter specimen</title>
+  <desc id="desc">A detailed black enamel manual typewriter on an oval desk shadow, with aged paper, carriage rails, ribbon spools, and rows of keys.</desc>
+  <defs>
+    <linearGradient id="enamel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#50574c"/>
+      <stop offset="0.18" stop-color="#252a23"/>
+      <stop offset="0.66" stop-color="#10130f"/>
+      <stop offset="1" stop-color="#050705"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#eee4c9"/>
+      <stop offset="1" stop-color="#c9b991"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#6c5a37"/>
+      <stop offset="0.35" stop-color="#d0af69"/>
+      <stop offset="0.7" stop-color="#82704b"/>
+      <stop offset="1" stop-color="#3a3325"/>
+    </linearGradient>
+    <radialGradient id="key" cx="40%" cy="30%" r="75%">
+      <stop stop-color="#f1e8d1"/>
+      <stop offset="0.68" stop-color="#b9ad91"/>
+      <stop offset="0.72" stop-color="#35362f"/>
+      <stop offset="1" stop-color="#11130f"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <pattern id="keys" width="55" height="45" patternUnits="userSpaceOnUse">
+      <circle cx="27" cy="22" r="18" fill="url(#key)" stroke="#070807" stroke-width="4"/>
+      <circle cx="27" cy="22" r="9" fill="none" stroke="#6d6656" stroke-width="1" opacity=".65"/>
+    </pattern>
+  </defs>
+
+  <ellipse cx="450" cy="552" rx="355" ry="45" fill="#000" opacity=".52" filter="url(#shadow)"/>
+
+  <path d="M284 57h332l-26 246H310z" fill="url(#paper)" stroke="#28241c" stroke-width="3"/>
+  <path d="M340 119h222M340 146h202M340 173h228M340 200h168" stroke="#454136" stroke-width="4" stroke-linecap="round" opacity=".42"/>
+  <path d="M333 95l225 0" stroke="#a6502b" stroke-width="2" opacity=".46"/>
+
+  <g fill="none" stroke="#0a0c09" stroke-width="14" stroke-linecap="round">
+    <path d="M146 238h608"/>
+    <path d="M190 218h520"/>
+  </g>
+  <path d="M157 229h588" stroke="url(#metal)" stroke-width="5"/>
+  <circle cx="145" cy="237" r="23" fill="#1d211b" stroke="#a38752" stroke-width="4"/>
+  <circle cx="755" cy="237" r="23" fill="#1d211b" stroke="#a38752" stroke-width="4"/>
+  <path d="M756 232h78q23 0 23-21" fill="none" stroke="#b99a60" stroke-width="9" stroke-linecap="round"/>
+
+  <path d="M183 314Q208 257 283 252h334q76 5 100 62l87 216q5 23-22 24H119q-27-1-21-24z" fill="url(#enamel)" stroke="#030403" stroke-width="6"/>
+  <path d="M244 310q33-43 84-46h244q55 4 85 46l21 51H222z" fill="#171a15" stroke="#050605" stroke-width="5"/>
+  <path d="M324 258q24-68 126-68t126 68" fill="#171b16" stroke="#060806" stroke-width="6"/>
+  <circle cx="358" cy="249" r="47" fill="#0b0d0a" stroke="#8e7448" stroke-width="5"/>
+  <circle cx="542" cy="249" r="47" fill="#0b0d0a" stroke="#8e7448" stroke-width="5"/>
+  <circle cx="358" cy="249" r="26" fill="none" stroke="#373b32" stroke-width="8"/>
+  <circle cx="542" cy="249" r="26" fill="none" stroke="#373b32" stroke-width="8"/>
+  <path d="M358 249q90-41 184 0" fill="none" stroke="#20221c" stroke-width="18"/>
+  <path d="M381 278q68-24 138 0" fill="none" stroke="#b85631" stroke-width="7" opacity=".75"/>
+  <path d="M307 308h286" stroke="#c3a463" stroke-width="3"/>
+  <text x="450" y="337" text-anchor="middle" font-family="Courier New,Courier,monospace" font-size="19" font-weight="700" letter-spacing="-1"><tspan fill="#e8dfc9">Octoberline</tspan><tspan fill="#c56735" dx="7">211</tspan></text>
+
+  <path d="M183 385h534l60 144H123z" fill="#0c0f0b" stroke="#050605" stroke-width="5"/>
+  <path d="M179 392h542l47 122H133z" fill="url(#keys)" opacity=".98"/>
+  <path d="M216 404l477 0M197 449h516M175 493h555" stroke="#050605" stroke-width="6" opacity=".55"/>
+  <rect x="323" y="494" width="255" height="28" rx="12" fill="#d7c9a8" stroke="#151711" stroke-width="6"/>
+  <path d="M121 533q-12 30 33 30h592q45 0 33-30" fill="#0a0c09" stroke="#030403" stroke-width="7"/>
+  <path d="M161 551h75M664 551h75" stroke="#a98a54" stroke-width="4" stroke-linecap="round"/>
+
+  <g stroke="#b6965a" stroke-width="3" opacity=".7">
+    <path d="M239 370l-12 19M273 370l-8 19M307 370l-5 19M341 370l-2 19M375 370v19M409 370l2 19M443 370l4 19M477 370l6 19M511 370l8 19M545 370l10 19M579 370l12 19M613 370l14 19M647 370l16 19"/>
+  </g>
+</svg>

@@ -3,13 +3,14 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { BRAND } from '../src/brand.js';
 
 export const DEFAULT_PREVIEW_URL = 'http://127.0.0.1:4177/';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PREVIEW_PORT = 4177;
 const START_TIMEOUT_MS = 30_000;
-const MERIDIAN_MARKER = 'Meridian No. 88';
+const PRODUCT_MARKER = BRAND.displayName;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean).map((value) => path.resolve(value)))];
@@ -151,11 +152,11 @@ async function probeHtml(targetUrl, timeoutMs = 1_500) {
     const body = await response.text();
     return {
       reachable: response.ok,
-      isMeridian: response.ok && body.includes(MERIDIAN_MARKER),
+      isExpectedProduct: response.ok && body.includes(PRODUCT_MARKER),
       status: response.status,
     };
   } catch {
-    return { reachable: false, isMeridian: false, status: 0 };
+    return { reachable: false, isExpectedProduct: false, status: 0 };
   } finally {
     clearTimeout(timer);
   }
@@ -182,7 +183,7 @@ export async function ensurePreviewServer({ targetUrl = DEFAULT_PREVIEW_URL } = 
   const initialProbe = await probeHtml(normalizedTarget);
 
   if (initialProbe.reachable) {
-    if (!initialProbe.isMeridian && isManagedLocalPreview(url)) {
+    if (!initialProbe.isExpectedProduct && isManagedLocalPreview(url)) {
       throw new Error(`Port ${PREVIEW_PORT} is already serving a different application; it was left untouched.`);
     }
     return {
@@ -224,7 +225,7 @@ export async function ensurePreviewServer({ targetUrl = DEFAULT_PREVIEW_URL } = 
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const probe = await probeHtml(normalizedTarget);
-    if (probe.reachable && probe.isMeridian) {
+    if (probe.reachable && probe.isExpectedProduct) {
       let closed = false;
       return {
         targetUrl: normalizedTarget,
@@ -238,7 +239,7 @@ export async function ensurePreviewServer({ targetUrl = DEFAULT_PREVIEW_URL } = 
     }
     if (child.exitCode !== null) {
       const raceProbe = await probeHtml(normalizedTarget);
-      if (raceProbe.reachable && raceProbe.isMeridian) {
+      if (raceProbe.reachable && raceProbe.isExpectedProduct) {
         return { targetUrl: normalizedTarget, started: false, close: async () => {} };
       }
       throw new Error(`Local preview exited before it was ready (code ${child.exitCode}). ${output.join('').trim()}`);

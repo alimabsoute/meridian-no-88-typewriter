@@ -95,16 +95,49 @@ describe('createPhiladelphiaRoomBackdrop', () => {
     asset.dispose();
   });
 
+  it('publishes stable PECO landmark bounds and renders the slab behind the rowhouses', () => {
+    const asset = createPhiladelphiaRoomBackdrop({ seed: 88, weather: 'quiet' });
+
+    expect(asset.layout.peco).toEqual({
+      tower: { x: 601, y: 350, width: 80, height: 216 },
+      broadFace: { x: 601, y: 350, width: 63, height: 216 },
+      sideFace: { x: 664, y: 350, width: 17, height: 216 },
+      crown: { x: 596, y: 318, width: 88, height: 32 },
+      crownBroadFace: { x: 596, y: 318, width: 70, height: 29 },
+      crownSideFace: { x: 666, y: 323, width: 18, height: 27 },
+      mast: { x: 638, y: 294, width: 4, height: 24 },
+    });
+    expect(asset.texture.userData.layout.peco).toBe(asset.layout.peco);
+
+    const skyBeside = sampleTopLeft(asset, { x: 564, y: 288 });
+    const broadFace = sampleTopLeft(asset, { x: 640, y: 366 });
+    const sideFace = sampleTopLeft(asset, { x: 669, y: 366 });
+    const crown = sampleTopLeft(asset, { x: 625, y: 334 });
+
+    expect(colorDistance(broadFace, skyBeside)).toBeGreaterThan(18);
+    expect(colorDistance(crown, skyBeside)).toBeGreaterThan(22);
+    expect(sideFace[0] + sideFace[1] + sideFace[2]).toBeLessThan(
+      broadFace[0] + broadFace[1] + broadFace[2],
+    );
+    expect([broadFace, sideFace, crown].every((sample) => sample[3] === 255)).toBe(true);
+
+    asset.dispose();
+  });
+
   it('supports static rain, snow, and nor-easter variants without changing the API', () => {
     const quiet = createPhiladelphiaRoomBackdrop({ width: 320, height: 240, seed: 42, weather: 'quiet' });
+    const autumn = createPhiladelphiaRoomBackdrop({ width: 320, height: 240, seed: 42, weather: 'autumn-wind' });
     const snow = createPhiladelphiaRoomBackdrop({ width: 320, height: 240, seed: 42, weather: 'snow' });
     const storm = createPhiladelphiaRoomBackdrop({ width: 320, height: 240, seed: 42, weather: "nor'easter" });
 
+    expect(pixelHash(quiet)).not.toBe(pixelHash(autumn));
     expect(pixelHash(quiet)).not.toBe(pixelHash(snow));
     expect(pixelHash(snow)).not.toBe(pixelHash(storm));
+    expect(autumn.weather).toBe('autumn-wind');
     expect(storm.weather).toBe('nor-easter');
 
     quiet.dispose();
+    autumn.dispose();
     snow.dispose();
     storm.dispose();
   });

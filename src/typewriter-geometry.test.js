@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TypewriterDocument } from './typewriter-document.js';
-import { CHARACTER_KEYS, TypewriterModel } from './typewriter-model.js';
+import { CHARACTER_KEYS, TOUCH_PRESETS, TypewriterModel } from './typewriter-model.js';
 
 const PRINTABLE_NEIGHBOR_PAIRS = CHARACTER_KEYS.flatMap((row) => (
   row.slice(1).map(([code], index) => [row[index][0], code])
@@ -64,7 +64,7 @@ function makeGeometryModel() {
   }
 }
 
-describe('Meridian keyboard geometry clearance', () => {
+describe('Octoberline 211 keyboard geometry clearance', () => {
   let model;
 
   beforeAll(() => {
@@ -100,7 +100,7 @@ describe('Meridian keyboard geometry clearance', () => {
       expect(typebar.lower).toBe(lower);
       expect(typebar.upper).toBe(upper);
     }
-  });
+  }, 15_000);
 
   it('places Backquote at the far-left number-row position without shifting the restored layout', () => {
     const backquote = model.keys.get('Backquote');
@@ -124,6 +124,17 @@ describe('Meridian keyboard geometry clearance', () => {
     expect(snapshot.rest.intersections).toEqual([]);
     expect(snapshot.depressed.intersections).toEqual([]);
     expect(snapshot.sweep.sampleCount).toBe(11);
+    expect(snapshot.sweep.intersections).toEqual([]);
+    expect(snapshot.sweep.minimumClearance).toBeGreaterThan(0.015);
+  }, 15_000);
+
+  it('keeps Heavy-touch key travel clear of the machine shell', () => {
+    const snapshot = model.getKeyShellClearanceSnapshot({
+      travelScale: TOUCH_PRESETS.heavy.keyTravelScale,
+    });
+
+    expect(snapshot.rest.intersections).toEqual([]);
+    expect(snapshot.depressed.intersections).toEqual([]);
     expect(snapshot.sweep.intersections).toEqual([]);
     expect(snapshot.sweep.minimumClearance).toBeGreaterThan(0.015);
   });

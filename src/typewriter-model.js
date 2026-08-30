@@ -25,6 +25,35 @@ const LATENCY_SAMPLE_LIMIT = 240;
 const STANDARD_KEY_TRAVEL = 0.095;
 const SPACE_KEY_TRAVEL = 0.11;
 const KEY_PRESS_ROTATION = 0.038;
+const MARGIN_STOP_RAIL_HALF_WIDTH = 2.86;
+export const DEFAULT_TOUCH_PRESET = 'medium';
+export const TOUCH_PRESETS = Object.freeze({
+  light: Object.freeze({
+    name: 'Light',
+    force: 0.6,
+    keyTravelScale: 0.94,
+    timingScale: 0.9,
+    soundScale: 0.84,
+    impulseScale: 0.78,
+  }),
+  medium: Object.freeze({
+    name: 'Medium',
+    force: 0.72,
+    keyTravelScale: 1,
+    timingScale: 1,
+    soundScale: 1,
+    impulseScale: 1,
+  }),
+  heavy: Object.freeze({
+    name: 'Heavy',
+    force: 0.86,
+    keyTravelScale: 1.08,
+    timingScale: 1.12,
+    soundScale: 1.12,
+    impulseScale: 1.28,
+  }),
+});
+const TOUCH_PRESET_NAMES = Object.freeze(Object.keys(TOUCH_PRESETS));
 const CLEARANCE_INTERSECTION_EPSILON = 1e-5;
 const CLEARANCE_SWEEP_STEPS = 10;
 const NEIGHBOR_SWEEP_STEPS = 10;
@@ -86,6 +115,15 @@ for (const [code, { lower, upper }] of KEY_BY_CODE) {
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeTouchPresetName(name) {
+  if (typeof name !== 'string') throw new TypeError('Touch preset must be a string');
+  const normalized = name.trim().toLowerCase();
+  if (!TOUCH_PRESETS[normalized]) {
+    throw new RangeError(`Touch preset must be one of: ${TOUCH_PRESET_NAMES.join(', ')}`);
+  }
+  return normalized;
 }
 
 function damp(current, target, smoothing, delta) {
@@ -176,15 +214,15 @@ function keyTopObjects(key) {
   return key.ring ? [key.ring, key.cap, key.labelDisc].filter(Boolean) : [key.base].filter(Boolean);
 }
 
-function hypotheticalKeyObjectMatrix(key, object, depressionAmount) {
-  const travel = key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL;
+function hypotheticalKeyObjectMatrix(key, object, depressionAmount, travelScale = 1) {
+  const travel = (key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL) * travelScale;
   const groupPosition = new THREE.Vector3(
     key.group.position.x,
     key.baseY - depressionAmount * travel,
     key.group.position.z,
   );
   const groupRotation = new THREE.Euler(
-    key.baseRotationX - depressionAmount * KEY_PRESS_ROTATION,
+    key.baseRotationX - depressionAmount * KEY_PRESS_ROTATION * travelScale,
     key.group.rotation.y,
     key.group.rotation.z,
     key.group.rotation.order,
@@ -337,7 +375,7 @@ export class TypewriterModel {
     this.onStatus = onStatus ?? (() => {});
 
     this.root = new THREE.Group();
-    this.root.name = 'MeridianNo88';
+    this.root.name = 'Octoberline211';
     this.scene.add(this.root);
     this.machine = new THREE.Group();
     this.machine.name = 'Machine';
@@ -370,7 +408,8 @@ export class TypewriterModel {
     this.shiftAmount = 0;
     this.marginReleased = false;
     this.marginReleaseTimer = 0;
-    this.touchForce = 0.72;
+    this.touchPreset = DEFAULT_TOUCH_PRESET;
+    this.touchForce = TOUCH_PRESETS[DEFAULT_TOUCH_PRESET].force;
     this.machineImpulse = 0;
     this.returning = null;
     this.tabMotion = null;
@@ -564,7 +603,7 @@ export class TypewriterModel {
       new THREE.PlaneGeometry(2.65, 0.2),
       new THREE.MeshBasicMaterial({ map: makeBadgeTexture(), transparent: true, toneMapped: false }),
     );
-    badge.name = 'MeridianBadge';
+    badge.name = 'Octoberline211Badge';
     badge.position.set(0, 0.43, 3.405);
     this.machine.add(badge);
 
@@ -901,16 +940,26 @@ export class TypewriterModel {
     scale.rotation.x = -0.08;
     this.carriage.add(scale);
 
-    for (const side of [-1, 1]) {
+    this.marginStops = {};
+    for (const [side, direction] of [['left', -1], ['right', 1]]) {
       const stop = new THREE.Group();
+      stop.name = `${side === 'left' ? 'Left' : 'Right'}MarginStop`;
+      stop.userData.marginSide = side;
       const block = new THREE.Mesh(makeRounded(0.22, 0.24, 0.25, 0.035, 2), this.materials.redIndicator);
+      block.userData.specialAction = 'margin-stop';
+      block.userData.marginSide = side;
       stop.add(block);
       const tab = new THREE.Mesh(makeRounded(0.08, 0.25, 0.08, 0.02, 2), this.materials.chrome);
       tab.position.y = 0.2;
+      tab.userData.specialAction = 'margin-stop';
+      tab.userData.marginSide = side;
       stop.add(tab);
-      stop.position.set(side * 2.86, 2.25, -0.77);
+      stop.position.set(direction * MARGIN_STOP_RAIL_HALF_WIDTH, 2.25, -0.77);
       this.carriage.add(stop);
+      this.clickTargets.push(block, tab);
+      this.marginStops[side] = stop;
     }
+    this.syncMarginStopControls();
 
     this.returnLever = new THREE.Group();
     this.returnLever.name = 'CarriageReturnLever';
@@ -1203,10 +1252,20 @@ export class TypewriterModel {
     keyGuides.instanceMatrix.needsUpdate = true;
     this.machine.add(keyGuides);
 
+    this.touchControl = new THREE.Group();
+    this.touchControl.name = 'TouchControl';
+    this.touchControl.position.set(-3.72, 1.05, 0.2);
     const touchDial = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.17, 28), this.materials.brass);
-    touchDial.position.set(-3.72, 1.05, 0.2);
     touchDial.rotation.z = Math.PI / 2;
-    this.machine.add(touchDial);
+    touchDial.userData.specialAction = 'touch-cycle';
+    this.touchControl.add(touchDial);
+    const touchIndicator = new THREE.Mesh(makeRounded(0.025, 0.14, 0.035, 0.008, 2), this.materials.darkSteel);
+    touchIndicator.position.set(-0.095, 0.11, 0);
+    touchIndicator.userData.specialAction = 'touch-cycle';
+    this.touchControl.add(touchIndicator);
+    this.machine.add(this.touchControl);
+    this.clickTargets.push(touchDial, touchIndicator);
+    this.syncTouchControl();
 
     const selectorTrack = new THREE.Mesh(makeRounded(0.18, 0.72, 0.08, 0.03, 2), this.materials.agedBrass);
     selectorTrack.position.set(3.62, 1.38, 0.05);
@@ -1223,6 +1282,143 @@ export class TypewriterModel {
       bumper.rotation.z = Math.PI / 2;
       this.machine.add(bumper);
     }
+  }
+
+  getTouchCalibration() {
+    const presetName = TOUCH_PRESETS[this.touchPreset] ? this.touchPreset : DEFAULT_TOUCH_PRESET;
+    return { preset: presetName, ...TOUCH_PRESETS[presetName] };
+  }
+
+  setTouchPreset(name, { emit = true } = {}) {
+    const presetName = normalizeTouchPresetName(name);
+    const preset = TOUCH_PRESETS[presetName];
+    this.touchPreset = presetName;
+    this.touchForce = preset.force;
+    this.syncTouchControl();
+    const calibration = this.getTouchCalibration();
+    if (emit) {
+      this.onChange({ type: 'touch-preset', ...calibration });
+      this.onStatus({ type: 'touch-preset', ...calibration });
+    }
+    return calibration;
+  }
+
+  cycleTouchPreset(direction = 1) {
+    const step = Number.isFinite(direction) && direction < 0 ? -1 : 1;
+    const current = Math.max(0, TOUCH_PRESET_NAMES.indexOf(this.touchPreset));
+    const next = (current + step + TOUCH_PRESET_NAMES.length) % TOUCH_PRESET_NAMES.length;
+    return this.setTouchPreset(TOUCH_PRESET_NAMES[next]);
+  }
+
+  syncTouchControl() {
+    if (!this.touchControl) return;
+    const positions = { light: -0.34, medium: 0, heavy: 0.34 };
+    this.touchControl.rotation.x = positions[this.touchPreset] ?? positions[DEFAULT_TOUCH_PRESET];
+    this.touchControl.userData.touchPreset = this.touchPreset ?? DEFAULT_TOUCH_PRESET;
+  }
+
+  getTouchControlInteractionSnapshot() {
+    return {
+      action: 'touch-cycle',
+      ...this.getTouchCalibration(),
+      presets: [...TOUCH_PRESET_NAMES],
+    };
+  }
+
+  marginColumnToLocalX(column) {
+    const ratio = clamp01(column / this.document.columns);
+    return THREE.MathUtils.lerp(-MARGIN_STOP_RAIL_HALF_WIDTH, MARGIN_STOP_RAIL_HALF_WIDTH, ratio);
+  }
+
+  marginLocalXToColumn(localX) {
+    if (!Number.isFinite(localX)) throw new TypeError('Margin stop position must be finite');
+    const ratio = clamp01(
+      (localX + MARGIN_STOP_RAIL_HALF_WIDTH) / (MARGIN_STOP_RAIL_HALF_WIDTH * 2),
+    );
+    return Math.round(ratio * this.document.columns);
+  }
+
+  syncMarginStopControls() {
+    if (!this.marginStops) return;
+    if (this.marginStops.left) {
+      this.marginStops.left.position.x = this.marginColumnToLocalX(this.document.leftMargin);
+      this.marginStops.left.userData.column = this.document.leftMargin;
+    }
+    if (this.marginStops.right) {
+      this.marginStops.right.position.x = this.marginColumnToLocalX(this.document.rightMargin);
+      this.marginStops.right.userData.column = this.document.rightMargin;
+    }
+  }
+
+  getMarginStopInteractionSnapshot() {
+    return {
+      left: {
+        side: 'left',
+        column: this.document.leftMargin,
+        localX: this.marginColumnToLocalX(this.document.leftMargin),
+        minimumColumn: 0,
+        maximumColumn: this.document.rightMargin - 1,
+      },
+      right: {
+        side: 'right',
+        column: this.document.rightMargin,
+        localX: this.marginColumnToLocalX(this.document.rightMargin),
+        minimumColumn: this.document.leftMargin + 1,
+        maximumColumn: this.document.columns,
+      },
+    };
+  }
+
+  setMargins(leftMargin, rightMargin, { immediate = true, emit = true } = {}) {
+    const result = this.document.setMargins(leftMargin, rightMargin);
+    this.syncMarginStopControls();
+    this.applyDocumentState(immediate);
+    if (emit) {
+      this.onChange({ type: 'margins', ...result });
+      this.onStatus({ type: 'margins', leftMargin, rightMargin });
+    }
+    return result;
+  }
+
+  setMarginStop(side, column, options = {}) {
+    if (side === 'left') return this.setMargins(column, this.document.rightMargin, options);
+    if (side === 'right') return this.setMargins(this.document.leftMargin, column, options);
+    throw new RangeError('Margin stop side must be left or right');
+  }
+
+  setMarginStopFromLocalX(side, localX, options = {}) {
+    const requested = this.marginLocalXToColumn(localX);
+    const limits = this.getMarginStopInteractionSnapshot()[side];
+    if (!limits) throw new RangeError('Margin stop side must be left or right');
+    const column = Math.max(limits.minimumColumn, Math.min(limits.maximumColumn, requested));
+    return this.setMarginStop(side, column, options);
+  }
+
+  setTabStops(stops, { emit = true } = {}) {
+    const tabStops = this.document.setTabStops(stops);
+    if (emit) {
+      this.onChange({ type: 'tab-stops', tabStops });
+      this.onStatus({ type: 'tab-stops', tabStops });
+    }
+    return tabStops;
+  }
+
+  setTabStop(column, enabled = true, { emit = true } = {}) {
+    const tabStops = this.document.setTabStop(column, enabled);
+    if (emit) {
+      this.onChange({ type: 'tab-stops', tabStops });
+      this.onStatus({ type: 'tab-stops', tabStops });
+    }
+    return tabStops;
+  }
+
+  getMechanicalSettings() {
+    return {
+      leftMargin: this.document.leftMargin,
+      rightMargin: this.document.rightMargin,
+      tabStops: this.document.tabStops,
+      touchPreset: this.touchPreset ?? DEFAULT_TOUCH_PRESET,
+    };
   }
 
   createCommand(properties) {
@@ -1243,10 +1439,24 @@ export class TypewriterModel {
 
   queueCharacter(character, code, force = this.touchForce) {
     if (!KEY_BY_CODE.has(code)) return false;
-    const command = this.createCommand({ type: 'character', character, code, force, duration: 0.135 });
+    const calibration = this.getTouchCalibration();
+    const impressionForce = Number.isFinite(force) ? clamp01(force) : calibration.force;
+    const command = this.createCommand({
+      type: 'character',
+      character,
+      code,
+      force: impressionForce,
+      soundForce: clamp01(impressionForce * calibration.soundScale),
+      impulseScale: calibration.impulseScale,
+      keyTravelScale: calibration.keyTravelScale,
+      duration: 0.135 * calibration.timingScale,
+      impactSeconds: COMMAND_IMPACT_SECONDS * calibration.timingScale,
+      releaseSeconds: COMMAND_RELEASE_SECONDS * calibration.timingScale,
+      touchPreset: calibration.preset,
+    });
     this.enqueueCommand(command, () => {
-      this.animateKey(code, 0.12);
-      this.audio.keyDown(force);
+      this.animateKey(code, 0.12 * calibration.timingScale, calibration.keyTravelScale);
+      this.audio.keyDown(command.soundForce);
     });
     return true;
   }
@@ -1358,6 +1568,7 @@ export class TypewriterModel {
     this.materials.paper.map = paperRenderer.texture;
     this.materials.paper.needsUpdate = true;
     if (previousTexture && previousTexture !== paperRenderer.texture) previousTexture.dispose();
+    this.syncMarginStopControls();
     this.applyDocumentState(true);
     if (!animateLoad) {
       this.paperLoading = null;
@@ -1432,11 +1643,12 @@ export class TypewriterModel {
     }
   }
 
-  animateKey(code, duration = 0.15) {
+  animateKey(code, duration = 0.15, travelScale = 1) {
     const key = this.keys.get(code);
     if (!key) return;
     key.phase = 0;
     key.duration = duration;
+    key.travelScale = travelScale;
     this.activeKeys.add(key);
   }
 
@@ -1460,7 +1672,9 @@ export class TypewriterModel {
     command.released = false;
     command.startedAt = this.commandClock();
     const timeline = this.strikeTimelineSeconds ?? 0;
-    const earliestImpact = timeline + COMMAND_IMPACT_SECONDS;
+    const impactSeconds = command.impactSeconds ?? COMMAND_IMPACT_SECONDS;
+    const releaseSeconds = command.releaseSeconds ?? COMMAND_RELEASE_SECONDS;
+    const earliestImpact = timeline + impactSeconds;
     // A reservation is meaningful only while another strike is active. Never
     // let an idle machine inherit stale scheduler history from an earlier run.
     const reservedImpact = this.activeStrikes.length
@@ -1468,7 +1682,7 @@ export class TypewriterModel {
       : earliestImpact;
     command.mechanicalImpactAt = Math.max(earliestImpact, reservedImpact);
     command.mechanicalDelay = command.mechanicalImpactAt - earliestImpact;
-    command.mechanicalReleaseAt = command.mechanicalImpactAt + (COMMAND_RELEASE_SECONDS - COMMAND_IMPACT_SECONDS);
+    command.mechanicalReleaseAt = command.mechanicalImpactAt + (releaseSeconds - impactSeconds);
     this.nextMechanicalImpactAt = command.mechanicalImpactAt + MECHANICAL_IMPACT_SLOT_SECONDS;
     command.blocked = this.document.atMargin && !this.marginReleased && command.type !== 'backspace';
     if (command.type === 'character') {
@@ -1512,8 +1726,8 @@ export class TypewriterModel {
       }
       this.paperRenderer.drawImpression(result.impression);
       this.advanceRibbon();
-      this.audio.strike(command.force);
-      this.machineImpulse += 0.009 * command.force;
+      this.audio.strike(command.soundForce ?? command.force);
+      this.machineImpulse += 0.009 * command.force * (command.impulseScale ?? 1);
       this.onStatus({ type: 'impression', character: command.character, ink: this.inkMode });
       command.advanceResult = result;
     } else if (command.type === 'space') {
@@ -1597,7 +1811,7 @@ export class TypewriterModel {
 
   startTab() {
     const startX = this.carriagePosition;
-    const result = this.document.tab(8, this.marginReleased);
+    const result = this.document.tab(null, this.marginReleased);
     if (!result.accepted) {
       this.onStatus({ type: result.reason });
       return;
@@ -1645,8 +1859,10 @@ export class TypewriterModel {
       if ((key.code === 'ShiftLeft' || key.code === 'ShiftRight') && this.shiftHeldCodes.has(key.code)) amount = Math.max(amount, 0.72);
       if (key.code === 'CapsLock' && this.shiftLocked) amount = Math.max(amount, 0.54);
       key.depression = damp(key.depression, amount, 30, dt);
-      key.group.position.y = key.baseY - key.depression * (key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL);
-      key.group.rotation.x = key.baseRotationX - key.depression * KEY_PRESS_ROTATION;
+      const travelScale = key.travelScale ?? 1;
+      key.group.position.y = key.baseY
+        - key.depression * (key.action === 'space' ? SPACE_KEY_TRAVEL : STANDARD_KEY_TRAVEL) * travelScale;
+      key.group.rotation.x = key.baseRotationX - key.depression * KEY_PRESS_ROTATION * travelScale;
       if (key.lever) {
         TMP_A.copy(key.leverStart);
         TMP_A.y -= key.depression * 0.095;
@@ -1878,7 +2094,10 @@ export class TypewriterModel {
     }
   }
 
-  getKeyShellClearanceSnapshot({ sweepSteps = CLEARANCE_SWEEP_STEPS } = {}) {
+  getKeyShellClearanceSnapshot({ sweepSteps = CLEARANCE_SWEEP_STEPS, travelScale = 1 } = {}) {
+    if (!Number.isFinite(travelScale) || travelScale <= 0) {
+      throw new RangeError('Key travel scale must be a positive finite number');
+    }
     const unsupportedShells = [];
     const shells = this.shellMeshes
       .map((mesh) => {
@@ -1905,7 +2124,7 @@ export class TypewriterModel {
         for (const shell of shells) {
           let pairClearance = Number.POSITIVE_INFINITY;
           for (const object of keyTopObjects(key)) {
-            const objectToMachine = hypotheticalKeyObjectMatrix(key, object, depressionAmount);
+            const objectToMachine = hypotheticalKeyObjectMatrix(key, object, depressionAmount, travelScale);
             const objectToShell = shell.inverseRestMatrix.clone().multiply(objectToMachine);
             pairClearance = Math.min(
               pairClearance,

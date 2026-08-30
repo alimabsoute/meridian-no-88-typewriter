@@ -39,8 +39,8 @@ async function pressAndCaptureKeyPeak(page, {
   maxSteps = 96,
 }) {
   await page.evaluate(() => {
-    const model = window.__MERIDIAN__.model;
-    if (window.__MERIDIAN_KEY_FREEZE__) throw new Error('A keyboard capture is already active');
+    const model = window.__OCTOBERLINE_211__.model;
+    if (window.__OCTOBERLINE_211_KEY_FREEZE__) throw new Error('A keyboard capture is already active');
     const keyboardBusy = model.activeStrikes.length > 0
       || model.commandQueue.length > 0
       || Boolean(model.returning)
@@ -51,7 +51,7 @@ async function pressAndCaptureKeyPeak(page, {
     // This test measures host-key correspondence from a clean mechanical instant.
     // Scheduler ordering and burst latency are exercised independently below.
     model.nextMechanicalImpactAt = model.strikeTimelineSeconds;
-    window.__MERIDIAN_KEY_FREEZE__ = {
+    window.__OCTOBERLINE_211_KEY_FREEZE__ = {
       hadOwnUpdate: Object.prototype.hasOwnProperty.call(model, 'update'),
       originalUpdate: model.update,
     };
@@ -65,8 +65,8 @@ async function pressAndCaptureKeyPeak(page, {
       targetThreshold,
       steps,
     }) => {
-      const model = window.__MERIDIAN__.model;
-      const update = window.__MERIDIAN_KEY_FREEZE__?.originalUpdate;
+      const model = window.__OCTOBERLINE_211__.model;
+      const update = window.__OCTOBERLINE_211_KEY_FREEZE__?.originalUpdate;
       if (typeof update !== 'function') throw new Error('Keyboard capture lost the model update function');
       const sample = {
         target: 0,
@@ -100,19 +100,19 @@ async function pressAndCaptureKeyPeak(page, {
     });
   } finally {
     await page.evaluate(() => {
-      const model = window.__MERIDIAN__?.model;
-      const capture = window.__MERIDIAN_KEY_FREEZE__;
+      const model = window.__OCTOBERLINE_211__?.model;
+      const capture = window.__OCTOBERLINE_211_KEY_FREEZE__;
       if (!model || !capture) return;
       if (capture.hadOwnUpdate) model.update = capture.originalUpdate;
       else delete model.update;
-      delete window.__MERIDIAN_KEY_FREEZE__;
+      delete window.__OCTOBERLINE_211_KEY_FREEZE__;
     }).catch(() => {});
   }
 }
 
 async function settleKeyboardModel(page, codes, maxSteps = 128) {
   const state = await page.evaluate(({ keyCodes, steps }) => {
-    const model = window.__MERIDIAN__.model;
+    const model = window.__OCTOBERLINE_211__.model;
     for (let step = 0; step < steps; step += 1) {
       const resting = keyCodes.every(
         (code) => (model.keys.get(code)?.depression ?? 1) < 0.02,
@@ -153,9 +153,24 @@ async function settleKeyboardModel(page, codes, maxSteps = 128) {
   }
 }
 
+async function advancePaperMotions(page, { rounds = 4, stepsPerRound = 24 } = {}) {
+  let state;
+  for (let round = 0; round < rounds; round += 1) {
+    state = await page.evaluate((steps) => {
+      const { paperView } = window.__OCTOBERLINE_211__;
+      for (let step = 0; step < steps; step += 1) paperView.update(0.05);
+      return { phase: paperView.phase, activeMotion: Boolean(paperView.motion) };
+    }, stepsPerRound);
+    // Paper actions chain through async UI handlers; allow each continuation to
+    // enqueue its next motion between deterministic simulation batches.
+    await page.waitForTimeout(0);
+  }
+  return state;
+}
+
 async function waitForSimulator(page) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
 }
 
 async function openDocumentTray(page) {
@@ -163,6 +178,13 @@ async function openDocumentTray(page) {
     await page.click('#document-toggle');
   }
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
+}
+
+async function openEnvironmentPanel(page) {
+  if (!(await page.locator('.environment-card').evaluate((element) => element.open))) {
+    await page.click('.environment-summary');
+  }
+  await page.waitForFunction(() => document.querySelector('.environment-card')?.open);
 }
 
 let browser;
@@ -173,7 +195,7 @@ await page.addInitScript(deterministicRandom);
 const errors = collectErrors(page);
 await page.goto(targetUrl, { waitUntil: 'networkidle' });
 try {
-  await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
 } catch (error) {
   throw new Error(`Simulator did not initialize: ${errors.join(' | ') || error.message}`);
 }
@@ -181,14 +203,14 @@ await page.click('#enter-studio');
 
 const paperAudioState = await page.evaluate(() => {
   const control = document.getElementById('paper-volume');
-  const machineBefore = window.__MERIDIAN__.audio.volume;
+  const machineBefore = window.__OCTOBERLINE_211__.audio.volume;
   control.value = '0.17';
   control.dispatchEvent(new Event('input', { bubbles: true }));
   return {
     controlValue: Number(control.value),
-    paperVolume: window.__MERIDIAN__.audio.paperVolume,
+    paperVolume: window.__OCTOBERLINE_211__.audio.paperVolume,
     machineBefore,
-    machineAfter: window.__MERIDIAN__.audio.volume,
+    machineAfter: window.__OCTOBERLINE_211__.audio.volume,
   };
 });
 if (
@@ -199,23 +221,98 @@ if (
   throw new Error(`Paper audio channel mismatch: ${JSON.stringify(paperAudioState)}`);
 }
 
+await openEnvironmentPanel(page);
+const controlReadability = await page.evaluate(() => {
+  const weather = document.querySelector('#weather-select');
+  const viewLabel = document.querySelector('[data-view="front"] b');
+  return {
+    weatherFontSize: Number.parseFloat(getComputedStyle(weather).fontSize),
+    weatherHeight: weather.getBoundingClientRect().height,
+    viewFontSize: Number.parseFloat(getComputedStyle(viewLabel).fontSize),
+  };
+});
 await page.click('#guide-open');
 await page.waitForFunction(() => document.querySelector('#field-guide')?.open);
-await page.click('.guide-close');
+const readabilityState = await page.evaluate((controls) => ({
+  ...controls,
+  guideBodyFontSize: Number.parseFloat(getComputedStyle(document.querySelector('.manual-grid p')).fontSize),
+  environmentClosedUnderGuide: !document.querySelector('.environment-card')?.open,
+}), controlReadability);
+await page.mouse.click(5, 5);
+await page.waitForFunction(() => !document.querySelector('#field-guide')?.open);
 await page.waitForFunction(() => document.activeElement?.id === 'scene');
 
-await page.keyboard.down('ShiftRight');
-await page.waitForFunction(() => window.__MERIDIAN__.model.keys.get('ShiftRight')?.depression > 0.35);
-const shiftState = await page.evaluate(() => ({
-  left: window.__MERIDIAN__.model.keys.get('ShiftLeft')?.depression ?? 0,
-  right: window.__MERIDIAN__.model.keys.get('ShiftRight')?.depression ?? 0,
-}));
-await page.keyboard.up('ShiftRight');
+await openDocumentTray(page);
+await page.keyboard.press('Escape');
+await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
+
+await openEnvironmentPanel(page);
+await page.click('.audio-mix summary');
+await page.waitForFunction(() => document.querySelector('.audio-mix')?.open);
+await page.click('[data-view="front"]');
+await page.waitForFunction(() => !document.querySelector('.audio-mix')?.open);
+
+await page.click('#inspection-toggle');
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 1);
+await openDocumentTray(page);
+await page.click('[data-view="front"]');
+await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 0);
+await page.evaluate(() => window.__OCTOBERLINE_211__.setView('front', 0));
+await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+const modalUiState = await page.evaluate((readability) => ({
+  readability,
+  guideOpen: document.querySelector('#field-guide')?.open,
+  trayExpanded: document.querySelector('#document-toggle')?.getAttribute('aria-expanded'),
+  environmentOpen: document.querySelector('.environment-card')?.open,
+  audioMixOpen: document.querySelector('.audio-mix')?.open,
+  activeView: document.querySelector('.view-button.active')?.dataset.view,
+  activeViewPressed: document.querySelector('[data-view="front"]')?.getAttribute('aria-pressed'),
+  cameraPosition: window.__OCTOBERLINE_211__.camera.position.toArray(),
+  inspectionPressed: document.querySelector('#inspection-toggle')?.getAttribute('aria-pressed'),
+  inspectionTarget: window.__OCTOBERLINE_211__.model.inspectionTarget,
+  keyboardCaptured: window.__OCTOBERLINE_211__.keyboardCaptured,
+  introInert: document.querySelector('#intro-overlay')?.inert,
+  focused: document.activeElement?.id,
+}), readabilityState);
+if (
+  modalUiState.guideOpen
+  || modalUiState.trayExpanded !== 'false'
+  || modalUiState.environmentOpen
+  || modalUiState.audioMixOpen
+  || modalUiState.activeView !== 'front'
+  || modalUiState.activeViewPressed !== 'true'
+  || Math.abs(modalUiState.cameraPosition[0]) > 0.01
+  || modalUiState.cameraPosition[2] < 15
+  || modalUiState.inspectionPressed !== 'false'
+  || modalUiState.inspectionTarget !== 0
+  || !modalUiState.keyboardCaptured
+  || !modalUiState.introInert
+  || modalUiState.focused !== 'scene'
+  || modalUiState.readability.weatherFontSize < 12
+  || modalUiState.readability.weatherHeight < 38
+  || modalUiState.readability.viewFontSize < 10
+  || modalUiState.readability.guideBodyFontSize < 14
+  || !modalUiState.readability.environmentClosedUnderGuide
+) {
+  throw new Error(`Modal, camera, or readability regression: ${JSON.stringify(modalUiState)}`);
+}
+await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
+await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+
+const shiftPeak = await pressAndCaptureKeyPeak(page, {
+  key: 'ShiftRight',
+  code: 'ShiftRight',
+  otherCodes: ['ShiftLeft'],
+  threshold: 0.35,
+});
+const shiftState = { left: shiftPeak.others.ShiftLeft, right: shiftPeak.target };
+await settleKeyboardModel(page, ['ShiftLeft', 'ShiftRight']);
 if (shiftState.right <= 0.35 || shiftState.left >= 0.2) throw new Error(`Shift-side mismatch: ${JSON.stringify(shiftState)}`);
 
 const geometryClearance = await page.evaluate(() => {
-  const shell = window.__MERIDIAN__.model.getKeyShellClearanceSnapshot();
-  const neighbors = window.__MERIDIAN__.model.getKeyNeighborClearanceSnapshot();
+  const shell = window.__OCTOBERLINE_211__.model.getKeyShellClearanceSnapshot();
+  const neighbors = window.__OCTOBERLINE_211__.model.getKeyNeighborClearanceSnapshot();
   return {
     unsupportedShells: shell.unsupportedShells,
     restIntersections: shell.rest.intersections,
@@ -259,11 +356,11 @@ let tabBackspaceState;
 try {
   await waitForSimulator(keyboardPage);
   await keyboardPage.click('#enter-studio');
-  await keyboardPage.waitForFunction(() => !window.__MERIDIAN__.model.busy);
+  await keyboardPage.waitForFunction(() => !window.__OCTOBERLINE_211__.model.busy);
 
   for (const representative of rowRepresentatives) {
     await keyboardPage.waitForFunction(
-      (codes) => codes.every((code) => (window.__MERIDIAN__.model.keys.get(code)?.depression ?? 1) < 0.02),
+      (codes) => codes.every((code) => (window.__OCTOBERLINE_211__.model.keys.get(code)?.depression ?? 1) < 0.02),
       representativeCodes,
     );
     const peak = await pressAndCaptureKeyPeak(keyboardPage, {
@@ -275,8 +372,8 @@ try {
     await settleKeyboardModel(keyboardPage, representativeCodes);
     expectedKeyboardText += representative.character;
     const settled = await keyboardPage.evaluate(() => ({
-      text: window.__MERIDIAN__.document.toPlainText(),
-      lastMark: window.__MERIDIAN__.document.marks.at(-1),
+      text: window.__OCTOBERLINE_211__.document.toPlainText(),
+      lastMark: window.__OCTOBERLINE_211__.document.marks.at(-1),
     }));
     const maximumOtherDepression = Math.max(...Object.values(peak.others));
     if (
@@ -291,19 +388,19 @@ try {
     keyCorrespondence.push({ ...representative, peak: peak.target, maximumOtherDepression, modeledName: peak.modeledName });
   }
 
-  const marksBeforeTab = await keyboardPage.evaluate(() => window.__MERIDIAN__.document.marks.length);
+  const marksBeforeTab = await keyboardPage.evaluate(() => window.__OCTOBERLINE_211__.document.marks.length);
   const tabPeak = (await pressAndCaptureKeyPeak(keyboardPage, { key: 'Tab', code: 'Tab' })).target;
   await settleKeyboardModel(keyboardPage, ['Tab']);
   const afterTab = await keyboardPage.evaluate(() => ({
-    column: window.__MERIDIAN__.document.column,
-    marks: window.__MERIDIAN__.document.marks.length,
+    column: window.__OCTOBERLINE_211__.document.column,
+    marks: window.__OCTOBERLINE_211__.document.marks.length,
   }));
 
   const backspacePeak = (await pressAndCaptureKeyPeak(keyboardPage, { key: 'Backspace', code: 'Backspace' })).target;
   await settleKeyboardModel(keyboardPage, ['Backspace']);
   const afterBackspace = await keyboardPage.evaluate(() => ({
-    column: window.__MERIDIAN__.document.column,
-    marks: window.__MERIDIAN__.document.marks.length,
+    column: window.__OCTOBERLINE_211__.document.column,
+    marks: window.__OCTOBERLINE_211__.document.marks.length,
   }));
 
   const recoveryPeak = (await pressAndCaptureKeyPeak(keyboardPage, {
@@ -312,11 +409,11 @@ try {
   })).target;
   await settleKeyboardModel(keyboardPage, ['KeyX']);
   const afterRecoveryType = await keyboardPage.evaluate(() => ({
-    column: window.__MERIDIAN__.document.column,
-    text: window.__MERIDIAN__.document.toPlainText(),
-    lastMark: window.__MERIDIAN__.document.marks.at(-1),
-    tabDepression: window.__MERIDIAN__.model.keys.get('Tab')?.depression ?? 1,
-    backspaceDepression: window.__MERIDIAN__.model.keys.get('Backspace')?.depression ?? 1,
+    column: window.__OCTOBERLINE_211__.document.column,
+    text: window.__OCTOBERLINE_211__.document.toPlainText(),
+    lastMark: window.__OCTOBERLINE_211__.document.marks.at(-1),
+    tabDepression: window.__OCTOBERLINE_211__.model.keys.get('Tab')?.depression ?? 1,
+    backspaceDepression: window.__OCTOBERLINE_211__.model.keys.get('Backspace')?.depression ?? 1,
   }));
   tabBackspaceState = {
     marksBeforeTab,
@@ -363,48 +460,71 @@ try {
   await waitForSimulator(reducedPage);
   await reducedPage.waitForFunction(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      && window.__MERIDIAN__.room.getState().reducedMotion,
+      && window.__OCTOBERLINE_211__.room.getState().reducedMotion,
   );
+  await reducedPage.hover('#enter-studio');
+  await reducedPage.waitForTimeout(120);
   const initialReduced = await reducedPage.evaluate(() => {
     const duration = getComputedStyle(document.querySelector('#intro-overlay')).transitionDuration.split(',')[0].trim();
     const transitionMilliseconds = duration.endsWith('ms') ? Number.parseFloat(duration) : Number.parseFloat(duration) * 1000;
     return {
       mediaMatches: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-      roomReduced: window.__MERIDIAN__.room.getState().reducedMotion,
-      snowCount: window.__MERIDIAN__.room.activeSnowCount,
-      updateStride: window.__MERIDIAN__.room.updateStride,
+      roomReduced: window.__OCTOBERLINE_211__.room.getState().reducedMotion,
+      snowCount: window.__OCTOBERLINE_211__.room.activeSnowCount,
+      updateStride: window.__OCTOBERLINE_211__.room.updateStride,
       transitionMilliseconds,
+      previewDepression: window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0,
     };
   });
+
+  await reducedPage.click('#enter-studio');
+  await reducedPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  const reducedEntry = await reducedPage.evaluate(() => ({
+    position: window.__OCTOBERLINE_211__.camera.position.toArray(),
+    target: window.__OCTOBERLINE_211__.controls.target.toArray(),
+    fov: window.__OCTOBERLINE_211__.camera.fov,
+    activeView: document.querySelector('.view-button.active')?.dataset.view,
+    overlayHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden'),
+  }));
 
   await reducedPage.emulateMedia({ reducedMotion: 'no-preference' });
   await reducedPage.waitForFunction(
     () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      && !window.__MERIDIAN__.room.getState().reducedMotion,
+      && !window.__OCTOBERLINE_211__.room.getState().reducedMotion,
   );
   const normalMotion = await reducedPage.evaluate(() => ({
     mediaMatches: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    roomReduced: window.__MERIDIAN__.room.getState().reducedMotion,
-    snowCount: window.__MERIDIAN__.room.activeSnowCount,
-    updateStride: window.__MERIDIAN__.room.updateStride,
+    roomReduced: window.__OCTOBERLINE_211__.room.getState().reducedMotion,
+    snowCount: window.__OCTOBERLINE_211__.room.activeSnowCount,
+    updateStride: window.__OCTOBERLINE_211__.room.updateStride,
   }));
 
   await reducedPage.emulateMedia({ reducedMotion: 'reduce' });
   await reducedPage.waitForFunction(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      && window.__MERIDIAN__.room.getState().reducedMotion,
+      && window.__OCTOBERLINE_211__.room.getState().reducedMotion,
   );
   const restoredReduced = await reducedPage.evaluate(() => ({
     mediaMatches: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    roomReduced: window.__MERIDIAN__.room.getState().reducedMotion,
-    snowCount: window.__MERIDIAN__.room.activeSnowCount,
-    uneaseSignal: window.__MERIDIAN__.room.getState().uneaseSignal,
+    roomReduced: window.__OCTOBERLINE_211__.room.getState().reducedMotion,
+    snowCount: window.__OCTOBERLINE_211__.room.activeSnowCount,
+    uneaseSignal: window.__OCTOBERLINE_211__.room.getState().uneaseSignal,
   }));
-  reducedMotionState = { initialReduced, normalMotion, restoredReduced };
+  reducedMotionState = { initialReduced, reducedEntry, normalMotion, restoredReduced };
   if (
     !initialReduced.mediaMatches
     || !initialReduced.roomReduced
-    || initialReduced.transitionMilliseconds > 1
+    || initialReduced.transitionMilliseconds > 180
+    || initialReduced.previewDepression !== 0
+    || Math.abs(reducedEntry.position[0]) > 0.02
+    || Math.abs(reducedEntry.position[1] - 5.45) > 0.02
+    || Math.abs(reducedEntry.position[2] - 15.1) > 0.02
+    || Math.abs(reducedEntry.target[0]) > 0.02
+    || Math.abs(reducedEntry.target[1] - 1.35) > 0.02
+    || Math.abs(reducedEntry.target[2] - 0.55) > 0.02
+    || Math.abs(reducedEntry.fov - 37) > 0.02
+    || reducedEntry.activeView !== 'front'
+    || reducedEntry.overlayHidden !== 'true'
     || normalMotion.mediaMatches
     || normalMotion.roomReduced
     || normalMotion.snowCount <= initialReduced.snowCount
@@ -440,7 +560,7 @@ const fullSceneViewport = page.viewportSize();
 if (!fullSceneViewport) throw new Error('The mechanics latency page has no viewport');
 await page.setViewportSize(ISOLATED_RENDER_SIZE);
 const sceneWasVisible = await page.evaluate(() => {
-  const { model } = window.__MERIDIAN__;
+  const { model } = window.__OCTOBERLINE_211__;
   const visible = model.scene.visible;
   model.scene.visible = false;
   return visible;
@@ -461,7 +581,7 @@ try {
       lastFrameAt: null,
       running: true,
     };
-    window.__MERIDIAN_BURST_CADENCE__ = sample;
+    window.__OCTOBERLINE_211_BURST_CADENCE__ = sample;
     const recordFrame = (now) => {
       if (!sample.running) return;
       if (sample.lastFrameAt !== null) sample.intervals.push(now - sample.lastFrameAt);
@@ -471,19 +591,19 @@ try {
     requestAnimationFrame(recordFrame);
   });
   paperUploadBaseline = await page.evaluate(
-    () => window.__MERIDIAN__.model.paperRenderer.getUploadStats(),
+    () => window.__OCTOBERLINE_211__.model.paperRenderer.getUploadStats(),
   );
-  await page.evaluate(() => window.__MERIDIAN__.model.resetLatencyMetrics());
+  await page.evaluate(() => window.__OCTOBERLINE_211__.model.resetLatencyMetrics());
   await page.keyboard.type(BROWSER_BURST_TEXT, {
     delay: BROWSER_BURST_DELAY_MS,
   });
-  await page.waitForFunction(() => !window.__MERIDIAN__.model.busy, null, { timeout: 30000 });
-  const first = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
+  await page.waitForFunction(() => !window.__OCTOBERLINE_211__.model.busy, null, { timeout: 30000 });
+  const first = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
   if (first !== BROWSER_BURST_TEXT) {
     throw new Error(`First line mismatch: ${JSON.stringify(first)}`);
   }
-  latency = await page.evaluate(() => window.__MERIDIAN__.model.getLatencySnapshot());
-  paperUploads = await page.evaluate(() => window.__MERIDIAN__.model.paperRenderer.getUploadStats());
+  latency = await page.evaluate(() => window.__OCTOBERLINE_211__.model.getLatencySnapshot());
+  paperUploads = await page.evaluate(() => window.__OCTOBERLINE_211__.model.paperRenderer.getUploadStats());
   paperUploadDelta = {
     fullUploads: paperUploads.fullUploads - paperUploadBaseline.fullUploads,
     partialUploads: paperUploads.partialUploads - paperUploadBaseline.partialUploads,
@@ -492,7 +612,7 @@ try {
     fullTextureBytes: paperUploads.fullTextureBytes,
   };
   burstFrameCadence = await page.evaluate(() => {
-    const sample = window.__MERIDIAN_BURST_CADENCE__;
+    const sample = window.__OCTOBERLINE_211_BURST_CADENCE__;
     if (!sample) throw new Error('Burst cadence sample is missing');
     sample.running = false;
     const sorted = [...sample.intervals].sort((a, b) => a - b);
@@ -506,7 +626,7 @@ try {
       p95Ms: sorted.length ? sorted[p95Index] : null,
       maxMs: sorted.length ? sorted.at(-1) : null,
     };
-    delete window.__MERIDIAN_BURST_CADENCE__;
+    delete window.__OCTOBERLINE_211_BURST_CADENCE__;
     return result;
   });
   const cadenceQualified = burstFrameCadence.sampleCount >= 20
@@ -555,13 +675,13 @@ try {
   }
 } finally {
   await page.evaluate(() => {
-    const sample = window.__MERIDIAN_BURST_CADENCE__;
+    const sample = window.__OCTOBERLINE_211_BURST_CADENCE__;
     if (sample) sample.running = false;
-    delete window.__MERIDIAN_BURST_CADENCE__;
+    delete window.__OCTOBERLINE_211_BURST_CADENCE__;
   });
   await page.setViewportSize(fullSceneViewport);
   await page.evaluate((visible) => {
-    window.__MERIDIAN__.model.scene.visible = visible;
+    window.__OCTOBERLINE_211__.model.scene.visible = visible;
   }, sceneWasVisible);
 }
 
@@ -576,12 +696,12 @@ await settleKeyboardModel(page, []);
 await page.keyboard.type('!');
 await settleKeyboardModel(page, []);
 const state = await page.evaluate(() => ({
-  text: window.__MERIDIAN__.document.toPlainText(),
-  column: window.__MERIDIAN__.document.column,
-  line: window.__MERIDIAN__.document.line,
-  marks: window.__MERIDIAN__.document.marks.length,
-  redMarks: window.__MERIDIAN__.document.marks.filter((mark) => mark.ink === 'red').length,
-  marginBellDistance: window.__MERIDIAN__.document.bellDistance,
+  text: window.__OCTOBERLINE_211__.document.toPlainText(),
+  column: window.__OCTOBERLINE_211__.document.column,
+  line: window.__OCTOBERLINE_211__.document.line,
+  marks: window.__OCTOBERLINE_211__.document.marks.length,
+  redMarks: window.__OCTOBERLINE_211__.document.marks.filter((mark) => mark.ink === 'red').length,
+  marginBellDistance: window.__OCTOBERLINE_211__.document.bellDistance,
 }));
 if (
   !state.text.includes('Red ribbon test!')
@@ -594,9 +714,9 @@ if (
 
 await openDocumentTray(page);
 const expectedExport = await page.evaluate(() => ({
-  text: window.__MERIDIAN__.document.toPlainText(),
-  sheetNumber: window.__MERIDIAN__.document.sheetNumber,
-  pngDataUrl: window.__MERIDIAN__.model.paperRenderer.canvas.toDataURL('image/png'),
+  text: window.__OCTOBERLINE_211__.document.toPlainText(),
+  sheetNumber: window.__OCTOBERLINE_211__.document.sheetNumber,
+  pngDataUrl: window.__OCTOBERLINE_211__.model.paperRenderer.canvas.toDataURL('image/png'),
 }));
 
 const textDownloadPromise = page.waitForEvent('download');
@@ -626,7 +746,7 @@ const exportState = {
   pngHeight,
   pngMatchesCanvas: downloadedPng.equals(expectedPng),
 };
-const expectedStem = `meridian-sheet-${String(expectedExport.sheetNumber).padStart(2, '0')}`;
+const expectedStem = `octoberline-211-sheet-${String(expectedExport.sheetNumber).padStart(2, '0')}`;
 if (
   exportState.textFilename !== `${expectedStem}.txt`
   || exportState.text !== expectedExport.text
@@ -643,44 +763,52 @@ if (
 await settleKeyboardModel(page, []);
 await openDocumentTray(page);
 await page.click('#release-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.looseSheet && window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.looseSheet && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 await page.click('#keep-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.manuscript.length === 1 && window.__MERIDIAN__.paperView.phase === 'idle', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.manuscript.length === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 
 // A kept page must restore the ribbon selector, modeled mechanism, and
 // checkpoint metadata to the archived ink mode before overtyping resumes.
 await page.click('#restore-manuscript');
+await advancePaperMotions(page);
 await page.waitForFunction(
-  () => window.__MERIDIAN__.paperState.looseSheet && window.__MERIDIAN__.paperView.phase === 'inspecting',
+  () => window.__OCTOBERLINE_211__.paperState.looseSheet && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting',
   null,
   { timeout: 15000 },
 );
 const restoredInkState = await page.evaluate(() => ({
-  modelInk: window.__MERIDIAN__.model.inkMode,
+  modelInk: window.__OCTOBERLINE_211__.model.inkMode,
   activeInk: document.querySelector('.ink-button.active')?.dataset.ink,
-  archivedInk: window.__MERIDIAN__.paperState.looseSheet?.page.metadata?.inkMode,
+  archivedInk: window.__OCTOBERLINE_211__.paperState.looseSheet?.page.metadata?.inkMode,
 }));
 if (restoredInkState.modelInk !== 'red' || restoredInkState.activeInk !== 'red' || restoredInkState.archivedInk !== 'red') {
   throw new Error(`Restored ink selector mismatch: ${JSON.stringify(restoredInkState)}`);
 }
 await page.click('#reinsert-sheet');
+await advancePaperMotions(page);
 await page.waitForFunction(
-  () => window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber === 1 && window.__MERIDIAN__.paperView.phase === 'idle',
+  () => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle',
   null,
   { timeout: 15000 },
 );
+await openDocumentTray(page);
 await page.click('#release-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 await page.click('#keep-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.manuscript.length === 1 && window.__MERIDIAN__.paperView.phase === 'idle', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.manuscript.length === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 
 await page.click('#load-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber === 2 && window.__MERIDIAN__.paperView.phase === 'idle', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 2 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 const newSheetState = await page.evaluate(() => ({
-  sheetNumber: window.__MERIDIAN__.document.sheetNumber,
-  marks: window.__MERIDIAN__.document.marks.length,
+  sheetNumber: window.__OCTOBERLINE_211__.document.sheetNumber,
+  marks: window.__OCTOBERLINE_211__.document.marks.length,
   focused: document.activeElement?.id,
-  manuscript: window.__MERIDIAN__.paperState.manuscript.length,
+  manuscript: window.__OCTOBERLINE_211__.paperState.manuscript.length,
 }));
 if (newSheetState.sheetNumber !== 2 || newSheetState.marks !== 0 || newSheetState.focused !== 'scene' || newSheetState.manuscript !== 1) {
   throw new Error(`New-sheet mismatch: ${JSON.stringify(newSheetState)}`);
@@ -688,33 +816,41 @@ if (newSheetState.sheetNumber !== 2 || newSheetState.marks !== 0 || newSheetStat
 
 await page.keyboard.type('recover me', { delay: 12 });
 await settleKeyboardModel(page, []);
+await openDocumentTray(page);
 await page.click('#release-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 const crumpleBox = await page.locator('#crumple-sheet').boundingBox();
 await page.mouse.move(crumpleBox.x + crumpleBox.width / 2, crumpleBox.y + crumpleBox.height / 2);
 await page.mouse.down();
-await page.waitForTimeout(1020);
+// The UI threshold is 950 ms; leave enough scheduling headroom for a heavily
+// software-rendered browser so pointerup cannot cancel the timer just before it fires.
+await page.waitForTimeout(1400);
 await page.mouse.up();
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.discards.length === 1 && window.__MERIDIAN__.paperView.phase === 'idle', null, { timeout: 20000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.discards.length === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 20000 });
 await page.click('#recover-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.looseSheet && window.__MERIDIAN__.paperView.phase === 'inspecting', null, { timeout: 15000 });
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.looseSheet && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 await page.click('#reinsert-sheet');
-await page.waitForFunction(() => window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber === 2 && window.__MERIDIAN__.paperView.phase === 'idle', null, { timeout: 15000 });
-const recoveredText = await page.evaluate(() => window.__MERIDIAN__.document.toPlainText());
+await advancePaperMotions(page);
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 2 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
+const recoveredText = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
 if (recoveredText !== 'recover me') throw new Error(`Recovered paper mismatch: ${JSON.stringify(recoveredText)}`);
 
+await openEnvironmentPanel(page);
 await page.selectOption('#weather-select', 'rain');
-await page.waitForFunction(() => window.__MERIDIAN__.room.getState().weather === 'rain');
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.getState().weather === 'rain');
 await page.selectOption('#weather-select', 'snow');
-await page.waitForFunction(() => window.__MERIDIAN__.room.getState().weather === 'snow');
+await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.getState().weather === 'snow');
 await page.waitForTimeout(700);
 await page.reload({ waitUntil: 'networkidle' });
-await page.waitForFunction(() => Boolean(window.__MERIDIAN__));
+await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
 const restored = await page.evaluate(() => ({
-  text: window.__MERIDIAN__.document.toPlainText(),
-  sheet: window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber,
-  manuscript: window.__MERIDIAN__.paperState.manuscript.length,
-  weather: window.__MERIDIAN__.room.getState().weather,
+  text: window.__OCTOBERLINE_211__.document.toPlainText(),
+  sheet: window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber,
+  manuscript: window.__OCTOBERLINE_211__.paperState.manuscript.length,
+  weather: window.__OCTOBERLINE_211__.room.getState().weather,
 }));
 if (restored.text !== 'recover me' || restored.sheet !== 2 || restored.manuscript !== 1 || restored.weather !== 'snow') {
   throw new Error(`Persistence mismatch: ${JSON.stringify(restored)}`);
@@ -741,8 +877,8 @@ await mobilePage.evaluate(() => {
     data: 'Hi',
   }));
 });
-await mobilePage.waitForFunction(() => window.__MERIDIAN__.document.marks.length === 2, null, { timeout: 10000 });
-const mobileText = await mobilePage.evaluate(() => window.__MERIDIAN__.document.toPlainText());
+await mobilePage.waitForFunction(() => window.__OCTOBERLINE_211__.document.marks.length === 2, null, { timeout: 10000 });
+const mobileText = await mobilePage.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
 if (mobileText !== 'Hi') throw new Error(`Mobile input mismatch: ${JSON.stringify(mobileText)}`);
 if (mobileErrors.length) throw new Error(`Mobile console errors: ${mobileErrors.join(' | ')}`);
 await mobileContext.close();
@@ -760,27 +896,27 @@ try {
   await openDocumentTray(reloadPage);
   await reloadPage.click('#release-sheet');
   await reloadPage.waitForFunction(
-    () => Boolean(window.__MERIDIAN__.paperState.looseSheet)
-      && window.__MERIDIAN__.paperView.phase === 'extracting',
+    () => Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet)
+      && window.__OCTOBERLINE_211__.paperView.phase === 'extracting',
     null,
     { timeout: 5_000 },
   );
   const extractionInterrupted = await reloadPage.evaluate(() => ({
-    phase: window.__MERIDIAN__.paperView.phase,
-    inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
-    loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-    text: window.__MERIDIAN__.document.toPlainText(),
+    phase: window.__OCTOBERLINE_211__.paperView.phase,
+    inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+    loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+    text: window.__OCTOBERLINE_211__.document.toPlainText(),
   }));
 
   await reloadPage.reload({ waitUntil: 'networkidle' });
-  await reloadPage.waitForFunction(() => Boolean(window.__MERIDIAN__));
+  await reloadPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
   const extractionRecovered = await reloadPage.evaluate(() => ({
-    phase: window.__MERIDIAN__.paperView.phase,
-    inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
-    loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-    activePage: Boolean(window.__MERIDIAN__.paperView.activePage),
-    machinePaperVisible: window.__MERIDIAN__.model.paperMesh.visible,
-    text: window.__MERIDIAN__.document.toPlainText(),
+    phase: window.__OCTOBERLINE_211__.paperView.phase,
+    inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+    loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+    activePage: Boolean(window.__OCTOBERLINE_211__.paperView.activePage),
+    machinePaperVisible: window.__OCTOBERLINE_211__.model.paperMesh.visible,
+    text: window.__OCTOBERLINE_211__.document.toPlainText(),
   }));
   if (
     extractionInterrupted.phase !== 'extracting'
@@ -801,31 +937,31 @@ try {
   await openDocumentTray(reloadPage);
   await reloadPage.click('#keep-sheet');
   await reloadPage.waitForFunction(
-    () => window.__MERIDIAN__.paperState.manuscript.length === 1
-      && window.__MERIDIAN__.paperView.phase === 'filing',
+    () => window.__OCTOBERLINE_211__.paperState.manuscript.length === 1
+      && window.__OCTOBERLINE_211__.paperView.phase === 'filing',
     null,
     { timeout: 5_000 },
   );
   const filingInterrupted = await reloadPage.evaluate(() => ({
-    phase: window.__MERIDIAN__.paperView.phase,
-    loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-    manuscript: window.__MERIDIAN__.paperState.manuscript.length,
+    phase: window.__OCTOBERLINE_211__.paperView.phase,
+    loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+    manuscript: window.__OCTOBERLINE_211__.paperState.manuscript.length,
   }));
 
   await reloadPage.reload({ waitUntil: 'networkidle' });
-  await reloadPage.waitForFunction(() => Boolean(window.__MERIDIAN__));
+  await reloadPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
   const filingRecovered = await reloadPage.evaluate(() => {
-    const state = window.__MERIDIAN__.paperState;
+    const state = window.__OCTOBERLINE_211__.paperState;
     return {
-      phase: window.__MERIDIAN__.paperView.phase,
+      phase: window.__OCTOBERLINE_211__.paperView.phase,
       inserted: Boolean(state.insertedSheet),
       loose: Boolean(state.looseSheet),
       manuscript: state.manuscript.length,
       manuscriptCharacters: state.manuscript[0]?.page?.content?.marks
         ?.map(({ character }) => character)
         .join(''),
-      manuscriptTopVisible: Boolean(window.__MERIDIAN__.paperView.manuscriptTopMesh?.visible),
-      visibleStackLayers: window.__MERIDIAN__.paperView.stackLayers.count,
+      manuscriptTopVisible: Boolean(window.__OCTOBERLINE_211__.paperView.manuscriptTopMesh?.visible),
+      visibleStackLayers: window.__OCTOBERLINE_211__.paperView.stackLayers.count,
     };
   });
   if (
@@ -863,7 +999,7 @@ try {
   await storageFailurePage.click('#enter-studio');
   await storageFailurePage.evaluate(() => {
     const originalSetItem = Storage.prototype.setItem;
-    window.__MERIDIAN_RESTORE_STORAGE__ = () => { Storage.prototype.setItem = originalSetItem; };
+    window.__OCTOBERLINE_211_RESTORE_STORAGE__ = () => { Storage.prototype.setItem = originalSetItem; };
     Storage.prototype.setItem = () => { throw new DOMException('Quota exhausted by test', 'QuotaExceededError'); };
   });
   await storageFailurePage.keyboard.type('z');
@@ -876,8 +1012,8 @@ try {
   storageFailureState = await storageFailurePage.evaluate(() => ({
     warning: document.getElementById('archive-warning')?.textContent,
     warningVisible: !document.getElementById('archive-warning')?.hidden,
-    text: window.__MERIDIAN__.document.toPlainText(),
-    inserted: Boolean(window.__MERIDIAN__.lifecycle.getOverview().insertedSheet),
+    text: window.__OCTOBERLINE_211__.document.toPlainText(),
+    inserted: Boolean(window.__OCTOBERLINE_211__.lifecycle.getOverview().insertedSheet),
   }));
   if (
     !storageFailureState.warningVisible
@@ -889,7 +1025,7 @@ try {
     throw new Error(`Storage failure warning mismatch: ${JSON.stringify({ storageFailureState, storageFailureErrors })}`);
   }
 } finally {
-  await storageFailurePage.evaluate(() => window.__MERIDIAN_RESTORE_STORAGE__?.()).catch(() => {});
+  await storageFailurePage.evaluate(() => window.__OCTOBERLINE_211_RESTORE_STORAGE__?.()).catch(() => {});
   await storageFailureContext.close();
 }
 
@@ -905,15 +1041,15 @@ for (const [label, quality, expectedQuality] of [
   try {
     const qualityUrl = withQuality(targetUrl, quality);
     await qualityPage.goto(qualityUrl, { waitUntil: 'networkidle' });
-    await qualityPage.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
+    await qualityPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
     await qualityPage.click('#enter-studio');
     await qualityPage.keyboard.type('q');
     await settleKeyboardModel(qualityPage, []);
     const qualityState = await qualityPage.evaluate(() => ({
-      text: window.__MERIDIAN__.document.toPlainText(),
-      ...window.__MERIDIAN__.room.getState(),
-      backdropVisible: window.__MERIDIAN__.room.backdropMesh.visible,
-      detailedRoomVisible: window.__MERIDIAN__.room.environment.visible,
+      text: window.__OCTOBERLINE_211__.document.toPlainText(),
+      ...window.__OCTOBERLINE_211__.room.getState(),
+      backdropVisible: window.__OCTOBERLINE_211__.room.backdropMesh.visible,
+      detailedRoomVisible: window.__OCTOBERLINE_211__.room.environment.visible,
     }));
     const expectedBackdrop = expectedQuality !== 'high';
     if (
@@ -945,6 +1081,7 @@ process.stdout.write(`${JSON.stringify({
   geometryClearance,
   keyCorrespondence,
   paperAudioState,
+  modalUiState,
   tabBackspaceState,
   reducedMotionState,
   exportState,

@@ -213,12 +213,28 @@ describe('AtmosphereAudio', () => {
   it('supports every release weather and unease preset with safe normalization', () => {
     const { audio } = createHarness();
     for (const weather of ATMOSPHERE_WEATHER_MODES) expect(audio.setWeather(weather)).toBe(weather);
+    expect(audio.setWeather('Autumn Wind')).toBe('autumn-wind');
     expect(audio.setWeather("Nor'easter")).toBe('nor-easter');
     expect(audio.setWeather('NOREASTER')).toBe('nor-easter');
     expect(audio.setWeather('hail')).toBe('quiet');
 
     for (const unease of ATMOSPHERE_UNEASE_LEVELS) expect(audio.setUnease(unease)).toBe(unease);
     expect(audio.setUnease('ominous')).toBe('off');
+  });
+
+  it('gives autumn wind a dry and restrained audio bed', async () => {
+    const { audio } = createHarness();
+    audio.setWeather('autumn-wind');
+    await audio.start();
+    const state = audio.update(0.1);
+
+    expect(state).toMatchObject({
+      weather: 'autumn-wind',
+      weatherLevels: { rain: 0, snow: 0, wind: 0.38 },
+    });
+    expect(audio.graph.rainTexture.gain.value).toBe(0);
+    expect(audio.graph.snowTexture.gain.value).toBe(0);
+    expect(audio.graph.windTexture.gain.value).toBeGreaterThan(0);
   });
 
   it('tracks the optional visual room state without abrupt or unsafe values', async () => {

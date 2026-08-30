@@ -32,7 +32,7 @@ function assertBrowserClean(label, errors) {
 async function waitForSimulator(page, { enter = true } = {}) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
   try {
-    await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60000 });
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
   } catch (error) {
     throw new Error(`Simulator did not initialize: ${error.message}`);
   }
@@ -52,9 +52,16 @@ async function openDocumentTray(page) {
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
 }
 
+async function openEnvironmentPanel(page) {
+  if (!(await page.locator('.environment-card').evaluate((element) => element.open))) {
+    await page.click('.environment-summary');
+  }
+  await page.waitForFunction(() => document.querySelector('.environment-card')?.open);
+}
+
 async function settleKeyboardModel(page, maxSteps = 256) {
   const state = await page.evaluate((steps) => {
-    const model = window.__MERIDIAN__.model;
+    const model = window.__OCTOBERLINE_211__.model;
     for (let step = 0; step < steps; step += 1) {
       if (!model.busy) return { settled: true, step };
       model.update(0.04);
@@ -74,7 +81,7 @@ async function settleKeyboardModel(page, maxSteps = 256) {
 
 async function settleInspection(page, maxSteps = 64) {
   const state = await page.evaluate((steps) => {
-    const model = window.__MERIDIAN__.model;
+    const model = window.__OCTOBERLINE_211__.model;
     for (let step = 0; step < steps; step += 1) {
       if (model.inspectionAmount > 0.95) {
         return { settled: true, step, amount: model.inspectionAmount };
@@ -90,7 +97,7 @@ async function advancePaperMotions(page, { rounds = 4, stepsPerRound = 24 } = {}
   let state;
   for (let round = 0; round < rounds; round += 1) {
     state = await page.evaluate((steps) => {
-      const { paperView } = window.__MERIDIAN__;
+      const { paperView } = window.__OCTOBERLINE_211__;
       for (let step = 0; step < steps; step += 1) paperView.update(0.05);
       return {
         phase: paperView.phase,
@@ -115,11 +122,11 @@ async function releaseCurrentSheet(page) {
   await openDocumentTray(page);
   await page.click('#release-sheet');
   await advancePaperMotions(page);
-  await page.evaluate(() => window.__MERIDIAN__.setView('paper', 0));
+  await page.evaluate(() => window.__OCTOBERLINE_211__.setView('paper', 0));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   await page.waitForFunction(
-    () => Boolean(window.__MERIDIAN__.paperState.looseSheet)
-      && window.__MERIDIAN__.paperView.phase === 'inspecting',
+    () => Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet)
+      && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting',
     null,
     { timeout: 20000 },
   );
@@ -134,10 +141,10 @@ async function holdToCrumple(page) {
   await page.waitForTimeout(1050);
   await page.mouse.up();
   await advancePaperMotions(page);
-  await page.evaluate(() => window.__MERIDIAN__.setView('writer', 0));
+  await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
   await page.waitForFunction(
-    () => window.__MERIDIAN__.paperState.discards.length === 1
-      && window.__MERIDIAN__.paperView.phase === 'idle',
+    () => window.__OCTOBERLINE_211__.paperState.discards.length === 1
+      && window.__OCTOBERLINE_211__.paperView.phase === 'idle',
     null,
     { timeout: 25000 },
   );
@@ -150,10 +157,17 @@ async function captureScenario({
   viewport = desktopViewport,
   isMobile = false,
   hasTouch = false,
+  reducedMotion = null,
   run,
 }) {
   if (requestedScenario && requestedScenario !== name) return;
-  const context = await browser.newContext({ viewport, isMobile, hasTouch, deviceScaleFactor: 1 });
+  const context = await browser.newContext({
+    viewport,
+    isMobile,
+    hasTouch,
+    deviceScaleFactor: 1,
+    ...(reducedMotion ? { reducedMotion } : {}),
+  });
   await context.addInitScript(() => {
     // Each plate begins from a known document, room, and random seed.
     try {
@@ -203,12 +217,152 @@ try {
     filename: '01-intro.png',
     enter: false,
     run: async (page) => {
+      await page.hover('#enter-studio');
+      await page.waitForFunction(
+        () => (window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0) > 0.04,
+      );
       const state = await page.evaluate(() => ({
         overlayHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden') === 'true',
         buttonVisible: Boolean(document.querySelector('#enter-studio')?.getBoundingClientRect().height),
-        initialized: Boolean(window.__MERIDIAN__),
+        secondaryVisible: Boolean(document.querySelector('#intro-guide')?.getBoundingClientRect().height),
+        initialized: Boolean(window.__OCTOBERLINE_211__),
+        brand: document.querySelector('.intro-carbon-brand')?.textContent.replace(/\s+/g, ' ').trim(),
+        kicker: document.querySelector('.intro-index')?.textContent,
+        title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
+        activeView: document.querySelector('.view-button.active')?.dataset.view,
+        keyPreview: window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0,
+        machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
+        roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
+        pecoIdentificationDwell: window.__OCTOBERLINE_211__.room.getState().pecoCrown.staticFrame,
+        actionsBounds: (() => {
+          const box = document.querySelector('.intro-actions')?.getBoundingClientRect();
+          return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null;
+        })(),
+        viewport: { width: innerWidth, height: innerHeight },
       }));
-      invariant(state.initialized && !state.overlayHidden && state.buttonVisible, `Intro state mismatch: ${JSON.stringify(state)}`);
+      invariant(
+        state.initialized
+          && !state.overlayHidden
+          && state.buttonVisible
+          && state.secondaryVisible
+          && state.brand === 'Octoberline 211'
+          && state.kicker === 'PHILADELPHIA · EARLY EVENING'
+          && state.title === 'A room for the next page.'
+          && state.activeView === 'writer'
+          && state.keyPreview > 0.04
+          && !state.machineAudioStarted
+          && !state.roomAudioStarted
+          && state.pecoIdentificationDwell
+          && state.actionsBounds?.left >= 0
+          && state.actionsBounds?.top >= 0
+          && state.actionsBounds?.right <= state.viewport.width
+          && state.actionsBounds?.bottom <= state.viewport.height,
+        `Intro state mismatch: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'intro-mobile',
+    filename: '01-intro-mobile.png',
+    enter: false,
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    run: async (page) => {
+      const state = await page.evaluate(() => {
+        const copy = document.querySelector('.intro-content')?.getBoundingClientRect();
+        const primary = document.querySelector('#enter-studio')?.getBoundingClientRect();
+        const secondary = document.querySelector('#intro-guide')?.getBoundingClientRect();
+        const brand = document.querySelector('.intro-carbon-brand')?.getBoundingClientRect();
+        const api = window.__OCTOBERLINE_211__;
+        const crown = api.room.root.getObjectByName('PECOTowerCrownLightsSimplifiedBroadFace');
+        const crownCorners = [
+          [-crown.userData.width / 2, -crown.userData.height / 2],
+          [crown.userData.width / 2, -crown.userData.height / 2],
+          [crown.userData.width / 2, crown.userData.height / 2],
+          [-crown.userData.width / 2, crown.userData.height / 2],
+        ].map(([x, y]) => crown.localToWorld(crown.position.clone().set(x, y, 0)).project(api.camera));
+        const crownXs = crownCorners.map(({ x }) => (x + 1) * innerWidth * 0.5);
+        const crownYs = crownCorners.map(({ y }) => (1 - y) * innerHeight * 0.5);
+        return {
+          title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
+          copy: copy ? { left: copy.left, top: copy.top, right: copy.right, bottom: copy.bottom } : null,
+          primary: primary ? { left: primary.left, top: primary.top, right: primary.right, bottom: primary.bottom } : null,
+          secondary: secondary ? { left: secondary.left, top: secondary.top, right: secondary.right, bottom: secondary.bottom } : null,
+          brand: brand ? { left: brand.left, top: brand.top, right: brand.right, bottom: brand.bottom } : null,
+          machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
+          roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
+          pecoIdentificationDwell: api.room.getState().pecoCrown.staticFrame,
+          crownBounds: {
+            left: Math.min(...crownXs),
+            top: Math.min(...crownYs),
+            right: Math.max(...crownXs),
+            bottom: Math.max(...crownYs),
+          },
+          scrollWidth: document.documentElement.scrollWidth,
+          viewport: { width: innerWidth, height: innerHeight },
+        };
+      });
+      invariant(
+        state.title === 'A room for the next page.'
+          && state.copy?.left >= 0
+          && state.copy?.top >= 0
+          && state.copy?.right <= state.viewport.width
+          && state.copy?.bottom <= state.viewport.height
+          && state.brand?.left >= 0
+          && state.brand?.right <= state.viewport.width
+          && state.primary?.left === state.secondary?.left
+          && state.primary?.right === state.secondary?.right
+          && state.secondary?.top >= state.primary?.bottom
+          && state.primary?.bottom - state.primary?.top >= 44
+          && state.secondary?.bottom - state.secondary?.top >= 44
+          && state.scrollWidth <= state.viewport.width
+          && state.crownBounds?.left >= 12
+          && state.crownBounds?.right <= state.viewport.width - 12
+          && state.crownBounds?.top >= 12
+          && state.crownBounds?.bottom <= state.viewport.height * 0.5
+          && !state.machineAudioStarted
+          && !state.roomAudioStarted
+          && state.pecoIdentificationDwell,
+        `Mobile intro state mismatch: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'intro-reduced',
+    filename: '01-intro-reduced.png',
+    enter: false,
+    reducedMotion: 'reduce',
+    run: async (page) => {
+      await page.hover('#enter-studio');
+      await page.waitForTimeout(120);
+      const state = await page.evaluate(() => {
+        const room = window.__OCTOBERLINE_211__.room;
+        const before = room.elapsed;
+        room.update(1, 99);
+        const transition = getComputedStyle(document.querySelector('#intro-overlay')).transitionDuration.split(',')[0].trim();
+        return {
+          reducedMotion: room.getState().reducedMotion,
+          roomStatic: room.elapsed === before,
+          crownStatic: room.getState().pecoCrown.staticFrame,
+          previewDepression: window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0,
+          transition,
+          backgroundMedia: document.querySelectorAll('#intro-overlay img, #intro-overlay video').length,
+        };
+      });
+      invariant(
+        state.reducedMotion
+          && state.roomStatic
+          && state.crownStatic
+          && state.previewDepression === 0
+          && state.transition === '0.16s'
+          && state.backgroundMedia === 0,
+        `Reduced-motion intro mismatch: ${JSON.stringify(state)}`,
+      );
       return state;
     },
   });
@@ -217,16 +371,132 @@ try {
     name: 'writer-rest',
     filename: '02-writer-rest.png',
     run: async (page) => {
-      const state = await page.evaluate(() => ({
-        introDismissed: document.querySelector('#intro-overlay')?.classList.contains('dismissed'),
-        insertedSheet: window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber,
-        marks: window.__MERIDIAN__.document.marks.length,
-        busy: window.__MERIDIAN__.model.busy,
-        focused: document.activeElement?.id,
-      }));
+      await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      const state = await page.evaluate(() => {
+        const crown = window.__OCTOBERLINE_211__.room.root.getObjectByName('PECOTowerCrownLightsSimplifiedBroadFace');
+        let crownBounds = null;
+        if (crown) {
+          const width = crown.userData.width;
+          const height = crown.userData.height;
+          const corners = [
+            [-width / 2, -height / 2], [width / 2, -height / 2],
+            [width / 2, height / 2], [-width / 2, height / 2],
+          ].map(([x, y]) => crown.localToWorld(crown.position.clone().set(x, y, 0)).project(window.__OCTOBERLINE_211__.camera));
+          const xs = corners.map(({ x }) => (x + 1) * innerWidth * 0.5);
+          const ys = corners.map(({ y }) => (1 - y) * innerHeight * 0.5);
+          crownBounds = {
+            left: Math.min(...xs),
+            top: Math.min(...ys),
+            right: Math.max(...xs),
+            bottom: Math.max(...ys),
+          };
+        }
+        return {
+          introDismissed: document.querySelector('#intro-overlay')?.classList.contains('dismissed'),
+          insertedSheet: window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber,
+          marks: window.__OCTOBERLINE_211__.document.marks.length,
+          busy: window.__OCTOBERLINE_211__.model.busy,
+          focused: document.activeElement?.id,
+          pecoCrown: window.__OCTOBERLINE_211__.room.getState().pecoCrown,
+          crownBounds,
+          viewport: { width: innerWidth, height: innerHeight },
+        };
+      });
       invariant(
         state.introDismissed && state.insertedSheet === 1 && state.marks === 0 && !state.busy && state.focused === 'scene',
         `Writer-rest state mismatch: ${JSON.stringify(state)}`,
+      );
+      invariant(
+        state.pecoCrown?.name === 'PECO Crown Lights'
+          && state.pecoCrown.frame > 0
+          && state.crownBounds?.left >= 0
+          && state.crownBounds?.top >= 80
+          && state.crownBounds.right <= state.viewport.width
+          && state.crownBounds.bottom < state.viewport.height * 0.55,
+        `PECO Crown Lights are outside the Writer composition: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'front-wide',
+    filename: '02-front-wide.png',
+    run: async (page) => {
+      await page.click('[data-view="front"]');
+      await page.evaluate(() => window.__OCTOBERLINE_211__.setView('front', 0));
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      const state = await page.evaluate(() => ({
+        activeView: document.querySelector('.view-button.active')?.dataset.view,
+        cameraPosition: window.__OCTOBERLINE_211__.camera.position.toArray(),
+        trayExpanded: document.querySelector('#document-toggle')?.getAttribute('aria-expanded'),
+        environmentOpen: document.querySelector('.environment-card')?.open,
+        weatherSummaryFontSize: Number.parseFloat(getComputedStyle(document.querySelector('#environment-summary')).fontSize),
+      }));
+      invariant(
+        state.activeView === 'front'
+          && Math.abs(state.cameraPosition[0]) < 0.01
+          && state.cameraPosition[2] >= 15
+          && state.trayExpanded === 'false'
+          && !state.environmentOpen
+          && state.weatherSummaryFontSize >= 12,
+        `Front-wide state mismatch: ${JSON.stringify(state)}`,
+      );
+      return state;
+    },
+  });
+
+  await captureScenario({
+    name: 'peco-window',
+    filename: '02-peco-window.png',
+    run: async (page) => {
+      if (await page.locator('#first-sheet-coach').isVisible()) await page.click('#coach-skip');
+      await page.evaluate(() => {
+        window.__OCTOBERLINE_211__.setView('writer', 0);
+        window.__OCTOBERLINE_211__.setWeather('autumn-wind');
+      });
+      await page.waitForTimeout(550);
+      if (await page.locator('#first-sheet-coach').isVisible()) await page.click('#coach-skip');
+      await page.evaluate(() => window.__OCTOBERLINE_211__.room.update(0.075, 8.3));
+      const state = await page.evaluate(() => {
+        const room = window.__OCTOBERLINE_211__.room;
+        const quality = room.getState().effectiveQuality;
+        const crown = room.root.getObjectByName(
+          quality === 'high'
+            ? 'PECOTowerCrownLightsHighBroadFace'
+            : 'PECOTowerCrownLightsSimplifiedBroadFace',
+        );
+        const width = crown.userData.width;
+        const height = crown.userData.height;
+        const corners = [
+          [-width / 2, -height / 2], [width / 2, -height / 2],
+          [width / 2, height / 2], [-width / 2, height / 2],
+        ].map(([x, y]) => crown.localToWorld(crown.position.clone().set(x, y, 0)).project(window.__OCTOBERLINE_211__.camera));
+        const xs = corners.map(({ x }) => (x + 1) * innerWidth * 0.5);
+        const ys = corners.map(({ y }) => (1 - y) * innerHeight * 0.5);
+        return {
+          quality,
+          crown: room.getState().pecoCrown,
+          bounds: {
+            left: Math.min(...xs),
+            top: Math.min(...ys),
+            right: Math.max(...xs),
+            bottom: Math.max(...ys),
+          },
+          viewport: { width: innerWidth, height: innerHeight },
+          tutorialHidden: document.querySelector('#first-sheet-coach')?.hidden,
+        };
+      });
+      invariant(
+        state.tutorialHidden
+          && state.crown.frame > 0
+          && !state.crown.staticFrame
+          && state.bounds.left >= 0
+          && state.bounds.top >= 80
+          && state.bounds.right <= state.viewport.width
+          && state.bounds.bottom < state.viewport.height * 0.55,
+        `PECO landmark plate mismatch: ${JSON.stringify(state)}`,
       );
       return state;
     },
@@ -239,9 +509,9 @@ try {
       const expected = 'Philadelphia, early evening.\nSnow settles beyond the glass.';
       await typeAndSettle(page, ['Philadelphia, early evening.', 'Snow settles beyond the glass.']);
       const state = await page.evaluate(() => ({
-        text: window.__MERIDIAN__.document.toPlainText(),
-        line: window.__MERIDIAN__.document.line,
-        marks: window.__MERIDIAN__.document.marks.length,
+        text: window.__OCTOBERLINE_211__.document.toPlainText(),
+        line: window.__OCTOBERLINE_211__.document.line,
+        marks: window.__OCTOBERLINE_211__.document.marks.length,
       }));
       invariant(state.text === expected && state.line === 1 && state.marks > 40, `Typed-paper state mismatch: ${JSON.stringify(state)}`);
       return state;
@@ -254,12 +524,12 @@ try {
     run: async (page) => {
       await page.click('#inspection-toggle');
       await settleInspection(page);
-      await page.evaluate(() => window.__MERIDIAN__.setView('mechanism', 0));
-      await page.waitForFunction(() => window.__MERIDIAN__.model.inspectionAmount > 0.95, null, { timeout: 10000 });
+      await page.evaluate(() => window.__OCTOBERLINE_211__.setView('mechanism', 0));
+      await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionAmount > 0.95, null, { timeout: 10000 });
       const state = await page.evaluate(() => ({
         pressed: document.querySelector('#inspection-toggle')?.getAttribute('aria-pressed'),
-        target: window.__MERIDIAN__.model.inspectionTarget,
-        amount: window.__MERIDIAN__.model.inspectionAmount,
+        target: window.__OCTOBERLINE_211__.model.inspectionTarget,
+        amount: window.__OCTOBERLINE_211__.model.inspectionAmount,
         cursor: document.querySelector('#scene')?.style.cursor,
       }));
       invariant(state.pressed === 'true' && state.target === 1 && state.amount > 0.95 && state.cursor === 'grab', `Inspection state mismatch: ${JSON.stringify(state)}`);
@@ -274,7 +544,7 @@ try {
       await typeAndSettle(page, ['A loose page waits for a decision.']);
       await releaseCurrentSheet(page);
       const state = await page.evaluate(() => {
-        const mesh = window.__MERIDIAN__.paperView.activePage?.mesh;
+        const mesh = window.__OCTOBERLINE_211__.paperView.activePage?.mesh;
         let screenBounds = null;
         if (mesh) {
           mesh.geometry.computeBoundingBox();
@@ -284,10 +554,10 @@ try {
             box.min.clone().set(box.max.x, box.min.y, box.min.z),
             box.max.clone(),
             box.max.clone().set(box.min.x, box.max.y, box.max.z),
-          ].map((point) => mesh.localToWorld(point).project(window.__MERIDIAN__.camera));
+          ].map((point) => mesh.localToWorld(point).project(window.__OCTOBERLINE_211__.camera));
           const xs = corners.map(({ x }) => (x + 1) * innerWidth * 0.5);
           const ys = corners.map(({ y }) => (1 - y) * innerHeight * 0.5);
-          const center = mesh.getWorldPosition(mesh.position.clone()).project(window.__MERIDIAN__.camera);
+          const center = mesh.getWorldPosition(mesh.position.clone()).project(window.__OCTOBERLINE_211__.camera);
           screenBounds = {
             left: Math.min(...xs),
             top: Math.min(...ys),
@@ -297,14 +567,14 @@ try {
             centerY: (1 - center.y) * innerHeight * 0.5,
             meshPosition: mesh.position.toArray(),
             meshScale: mesh.scale.toArray(),
-            cameraPosition: window.__MERIDIAN__.camera.position.toArray(),
+            cameraPosition: window.__OCTOBERLINE_211__.camera.position.toArray(),
           };
         }
         return {
-          inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
-          loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-          phase: window.__MERIDIAN__.paperView.phase,
-          machinePaperVisible: window.__MERIDIAN__.model.paperMesh.visible,
+          inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+          loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+          phase: window.__OCTOBERLINE_211__.paperView.phase,
+          machinePaperVisible: window.__OCTOBERLINE_211__.model.paperMesh.visible,
           paperStatus: document.querySelector('#paper-status')?.textContent,
           keepVisible: !document.querySelector('#keep-sheet')?.hidden,
           crumpleVisible: !document.querySelector('#crumple-sheet')?.hidden,
@@ -330,18 +600,18 @@ try {
       await releaseCurrentSheet(page);
       await page.click('#keep-sheet');
       await advancePaperMotions(page);
-      await page.evaluate(() => window.__MERIDIAN__.setView('writer', 0));
+      await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
       await page.waitForFunction(
-        () => window.__MERIDIAN__.paperState.manuscript.length === 1
-          && window.__MERIDIAN__.paperView.phase === 'idle',
+        () => window.__OCTOBERLINE_211__.paperState.manuscript.length === 1
+          && window.__OCTOBERLINE_211__.paperView.phase === 'idle',
         null,
         { timeout: 20000 },
       );
       const state = await page.evaluate(() => ({
-        inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
-        loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-        manuscript: window.__MERIDIAN__.paperState.manuscript.length,
-        visibleStackLayers: window.__MERIDIAN__.paperView.stackLayers.count,
+        inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+        loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+        manuscript: window.__OCTOBERLINE_211__.paperState.manuscript.length,
+        visibleStackLayers: window.__OCTOBERLINE_211__.paperView.stackLayers.count,
         paperStatus: document.querySelector('#paper-status')?.textContent,
         loadVisible: !document.querySelector('#load-sheet')?.hidden,
       }));
@@ -365,10 +635,10 @@ try {
       await releaseCurrentSheet(page);
       await holdToCrumple(page);
       const state = await page.evaluate(() => ({
-        inserted: Boolean(window.__MERIDIAN__.paperState.insertedSheet),
-        loose: Boolean(window.__MERIDIAN__.paperState.looseSheet),
-        discards: window.__MERIDIAN__.paperState.discards.length,
-        discardVisuals: window.__MERIDIAN__.paperView.discardVisuals.size,
+        inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+        loose: Boolean(window.__OCTOBERLINE_211__.paperState.looseSheet),
+        discards: window.__OCTOBERLINE_211__.paperState.discards.length,
+        discardVisuals: window.__OCTOBERLINE_211__.paperView.discardVisuals.size,
         discardCountText: document.querySelector('#discard-count')?.textContent,
         recoverVisible: !document.querySelector('#recover-sheet')?.hidden,
       }));
@@ -388,19 +658,20 @@ try {
     name: 'rain',
     filename: '08-rain.png',
     run: async (page) => {
+      await openEnvironmentPanel(page);
       await page.selectOption('#weather-select', 'rain');
       await page.waitForFunction(
-        () => window.__MERIDIAN__.room.getState().weather === 'rain'
-          && window.__MERIDIAN__.room.rain.visible
-          && window.__MERIDIAN__.room.rainMaterial.opacity > 0.2,
+        () => window.__OCTOBERLINE_211__.room.getState().weather === 'rain'
+          && window.__OCTOBERLINE_211__.room.rain.visible
+          && window.__OCTOBERLINE_211__.room.rainMaterial.opacity > 0.2,
         null,
         { timeout: 10000 },
       );
       await page.waitForTimeout(700);
       const state = await page.evaluate(() => ({
-        weather: window.__MERIDIAN__.room.getState().weather,
-        rainVisible: window.__MERIDIAN__.room.rain.visible,
-        rainOpacity: window.__MERIDIAN__.room.rainMaterial.opacity,
+        weather: window.__OCTOBERLINE_211__.room.getState().weather,
+        rainVisible: window.__OCTOBERLINE_211__.room.rain.visible,
+        rainOpacity: window.__OCTOBERLINE_211__.room.rainMaterial.opacity,
         selected: document.querySelector('#weather-select')?.value,
       }));
       invariant(state.weather === 'rain' && state.rainVisible && state.rainOpacity > 0.2 && state.selected === 'rain', `Rain state mismatch: ${JSON.stringify(state)}`);
@@ -412,19 +683,20 @@ try {
     name: 'snow',
     filename: '09-snow.png',
     run: async (page) => {
+      await openEnvironmentPanel(page);
       await page.selectOption('#weather-select', 'snow');
       await page.waitForFunction(
-        () => window.__MERIDIAN__.room.getState().weather === 'snow'
-          && window.__MERIDIAN__.room.snow.visible
-          && window.__MERIDIAN__.room.snowPointsMaterial.opacity > 0.3,
+        () => window.__OCTOBERLINE_211__.room.getState().weather === 'snow'
+          && window.__OCTOBERLINE_211__.room.snow.visible
+          && window.__OCTOBERLINE_211__.room.snowPointsMaterial.opacity > 0.3,
         null,
         { timeout: 10000 },
       );
       await page.waitForTimeout(700);
       const state = await page.evaluate(() => ({
-        weather: window.__MERIDIAN__.room.getState().weather,
-        snowVisible: window.__MERIDIAN__.room.snow.visible,
-        snowOpacity: window.__MERIDIAN__.room.snowPointsMaterial.opacity,
+        weather: window.__OCTOBERLINE_211__.room.getState().weather,
+        snowVisible: window.__OCTOBERLINE_211__.room.snow.visible,
+        snowOpacity: window.__OCTOBERLINE_211__.room.snowPointsMaterial.opacity,
         selected: document.querySelector('#weather-select')?.value,
       }));
       invariant(state.weather === 'snow' && state.snowVisible && state.snowOpacity > 0.3 && state.selected === 'snow', `Snow state mismatch: ${JSON.stringify(state)}`);
@@ -470,9 +742,9 @@ try {
       });
       await settleKeyboardModel(page);
       const state = await page.evaluate(() => ({
-        text: window.__MERIDIAN__.document.toPlainText(),
+        text: window.__OCTOBERLINE_211__.document.toPlainText(),
         inputVisible: document.querySelector('#mobile-input')?.getBoundingClientRect().height > 0,
-        insertedSheet: window.__MERIDIAN__.paperState.insertedSheet?.sheetNumber,
+        insertedSheet: window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber,
       }));
       invariant(state.text === 'Hi' && state.inputVisible && state.insertedSheet === 1, `Mobile state mismatch: ${JSON.stringify(state)}`);
       return state;

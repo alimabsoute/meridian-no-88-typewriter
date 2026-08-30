@@ -1,4 +1,11 @@
-export const WEATHER_PRESETS = Object.freeze(['quiet', 'rain', 'snow', 'nor-easter', 'automatic']);
+export const WEATHER_PRESETS = Object.freeze([
+  'quiet',
+  'autumn-wind',
+  'rain',
+  'snow',
+  'nor-easter',
+  'automatic',
+]);
 export const UNEASE_LEVELS = Object.freeze(['off', 'subtle', 'unsettling']);
 export const QUALITY_MODES = Object.freeze(['auto', 'low', 'medium', 'high']);
 
@@ -6,18 +13,21 @@ export const QUALITY_PROFILES = Object.freeze({
   low: Object.freeze({
     rainStreaks: 160,
     snowFlakes: 120,
+    autumnLeaves: 3,
     glassDroplets: 10,
     updateStride: 2,
   }),
   medium: Object.freeze({
     rainStreaks: 360,
     snowFlakes: 280,
+    autumnLeaves: 5,
     glassDroplets: 22,
     updateStride: 1,
   }),
   high: Object.freeze({
     rainStreaks: 640,
     snowFlakes: 480,
+    autumnLeaves: 8,
     glassDroplets: 38,
     updateStride: 1,
   }),
@@ -33,8 +43,9 @@ function normalize(value, allowed, fallback) {
 }
 
 export function normalizeWeatherPreset(value) {
-  const raw = String(value ?? '').toLowerCase().replace('’', "'");
+  const raw = String(value ?? '').trim().toLowerCase().replace('’', "'");
   if (["nor'easter", 'noreaster', 'nor_easter'].includes(raw)) return 'nor-easter';
+  if (['autumn', 'fall', 'fall-wind', 'autumn_wind', 'autumn wind'].includes(raw)) return 'autumn-wind';
   return normalize(raw, WEATHER_PRESETS, 'quiet');
 }
 
@@ -66,19 +77,22 @@ function mixWeather(start, end, amount) {
     snow: mix(start.snow, end.snow, t),
     wind: mix(start.wind, end.wind, t),
     cloud: mix(start.cloud, end.cloud, t),
+    leaves: mix(start.leaves, end.leaves, t),
   };
 }
 
 const WEATHER_TARGETS = Object.freeze({
-  quiet: Object.freeze({ rain: 0, snow: 0, wind: 0.08, cloud: 0.18 }),
-  rain: Object.freeze({ rain: 1, snow: 0, wind: 0.42, cloud: 0.78 }),
-  snow: Object.freeze({ rain: 0, snow: 1, wind: 0.22, cloud: 0.62 }),
-  'nor-easter': Object.freeze({ rain: 0.72, snow: 0.42, wind: 0.96, cloud: 1 }),
+  quiet: Object.freeze({ rain: 0, snow: 0, wind: 0.08, cloud: 0.18, leaves: 0 }),
+  'autumn-wind': Object.freeze({ rain: 0, snow: 0, wind: 0.38, cloud: 0.28, leaves: 1 }),
+  rain: Object.freeze({ rain: 1, snow: 0, wind: 0.42, cloud: 0.78, leaves: 0 }),
+  snow: Object.freeze({ rain: 0, snow: 1, wind: 0.22, cloud: 0.62, leaves: 0 }),
+  'nor-easter': Object.freeze({ rain: 0.72, snow: 0.42, wind: 0.96, cloud: 1, leaves: 0 }),
 });
 
 /**
- * Returns deterministic precipitation levels. Automatic weather uses a slow,
- * repeating six-minute cycle with eased transitions and no abrupt loop seam.
+ * Returns deterministic atmosphere levels. Automatic weather preserves its
+ * original six-minute precipitation cycle; the authored autumn-wind preset is
+ * selected explicitly so leaves never arrive as a surprise while writing.
  */
 export function resolveWeatherTargets(preset, elapsedSeconds = 0, seed = 88) {
   const weather = normalizeWeatherPreset(preset);

@@ -1,5 +1,5 @@
 {
-  "name": "meridian-typewriter-simulator",
+  "name": "octoberline-211-typewriter-simulator",
   "private": true,
   "version": "0.2.0",
   "type": "module",
@@ -15,9 +15,13 @@
     "test:offline": "node scripts/direct-file-check.mjs",
     "test:performance": "node scripts/performance-check.mjs",
     "test:visual": "node scripts/visual-check.mjs",
+    "test:release-ui": "node scripts/release-ui-check.mjs",
+    "test:community-preview": "node scripts/community-coming-soon-check.mjs",
+    "test:writing-board-preview": "node coming-soon/writing-board/smoke.mjs",
+    "test:package": "node scripts/release-package-check.mjs",
     "package:release": "node scripts/package-release.mjs",
-    "build:release": "npm run build && npm run package:release",
-    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:offline && npm run test:performance && npm run test:visual"
+    "build:release": "npm run build && npm run package:release && npm run test:package",
+    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:release-ui && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.2.6",

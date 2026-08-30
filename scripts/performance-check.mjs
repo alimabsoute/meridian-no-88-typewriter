@@ -26,7 +26,7 @@ function metricMap(payload) {
 
 async function openSimulator(page, targetUrl) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => Boolean(window.__MERIDIAN__), null, { timeout: 60_000 });
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
   await page.click('#enter-studio');
   await page.waitForTimeout(900);
 }
@@ -86,10 +86,10 @@ try {
   try {
     await openSimulator(page, defaultUrl);
     const qualityState = await page.evaluate(() => ({
-      ...window.__MERIDIAN__.room.getState(),
-      backdropVisible: window.__MERIDIAN__.room.backdropMesh.visible,
-      environmentVisible: window.__MERIDIAN__.room.environment.visible,
-      exteriorVisible: window.__MERIDIAN__.room.exterior.visible,
+      ...window.__OCTOBERLINE_211__.room.getState(),
+      backdropVisible: window.__OCTOBERLINE_211__.room.backdropMesh.visible,
+      environmentVisible: window.__OCTOBERLINE_211__.room.environment.visible,
+      exteriorVisible: window.__OCTOBERLINE_211__.room.exterior.visible,
     }));
     invariant(
       qualityState.quality === 'medium'
@@ -137,9 +137,9 @@ try {
         return result;
       };
       return {
-        machine: count(window.__MERIDIAN__.model.root),
-        room: count(window.__MERIDIAN__.room.root),
-        paper: count(window.__MERIDIAN__.paperView.root),
+        machine: count(window.__OCTOBERLINE_211__.model.root),
+        room: count(window.__OCTOBERLINE_211__.room.root),
+        paper: count(window.__OCTOBERLINE_211__.paperView.root),
         resourceEntries: performance.getEntriesByType('resource').length,
       };
     });
@@ -149,7 +149,7 @@ try {
     );
 
     const updateBenchmark = await page.evaluate(() => {
-      const room = window.__MERIDIAN__.room;
+      const room = window.__OCTOBERLINE_211__.room;
       room.setVisible(true);
       room.setWeatherPreset('snow', { immediate: true });
       const iterations = 600;
@@ -165,18 +165,18 @@ try {
 
     const cpuSamples = [];
     cpuSamples.push(await sampleCpu(page, session, 'machine-only-a', () => {
-      window.__MERIDIAN__.room.setWeatherPreset('quiet', { immediate: true });
-      window.__MERIDIAN__.room.setVisible(false);
+      window.__OCTOBERLINE_211__.room.setWeatherPreset('quiet', { immediate: true });
+      window.__OCTOBERLINE_211__.room.setVisible(false);
     }));
     cpuSamples.push(await sampleCpu(page, session, 'full-snow', () => {
-      window.__MERIDIAN__.room.setVisible(true);
-      window.__MERIDIAN__.room.setWeatherPreset('snow', { immediate: true });
+      window.__OCTOBERLINE_211__.room.setVisible(true);
+      window.__OCTOBERLINE_211__.room.setWeatherPreset('snow', { immediate: true });
     }));
     cpuSamples.push(await sampleCpu(page, session, 'full-quiet', () => {
-      window.__MERIDIAN__.room.setWeatherPreset('quiet', { immediate: true });
+      window.__OCTOBERLINE_211__.room.setWeatherPreset('quiet', { immediate: true });
     }));
     cpuSamples.push(await sampleCpu(page, session, 'machine-only-b', () => {
-      window.__MERIDIAN__.room.setVisible(false);
+      window.__OCTOBERLINE_211__.room.setVisible(false);
     }));
 
     const machineSamples = cpuSamples.filter(({ label }) => label.startsWith('machine-only'));
@@ -203,11 +203,11 @@ try {
 
     const rafSamples = [];
     rafSamples.push(await sampleRaf(page, 'full-snow', () => {
-      window.__MERIDIAN__.room.setVisible(true);
-      window.__MERIDIAN__.room.setWeatherPreset('snow', { immediate: true });
+      window.__OCTOBERLINE_211__.room.setVisible(true);
+      window.__OCTOBERLINE_211__.room.setWeatherPreset('snow', { immediate: true });
     }));
     rafSamples.push(await sampleRaf(page, 'machine-only', () => {
-      window.__MERIDIAN__.room.setVisible(false);
+      window.__OCTOBERLINE_211__.room.setVisible(false);
     }));
     const rafCapDetected = rafSamples.every(({ fps }) => fps === rafSamples[0].fps)
       && [30, 60].includes(rafSamples[0].fps);
@@ -219,10 +219,10 @@ try {
     try {
       await openSimulator(lowPage, withQuality(defaultUrl, 'low'));
       lowQualityState = await lowPage.evaluate(() => ({
-        ...window.__MERIDIAN__.room.getState(),
-        backdropVisible: window.__MERIDIAN__.room.backdropMesh.visible,
-        environmentVisible: window.__MERIDIAN__.room.environment.visible,
-        exteriorVisible: window.__MERIDIAN__.room.exterior.visible,
+        ...window.__OCTOBERLINE_211__.room.getState(),
+        backdropVisible: window.__OCTOBERLINE_211__.room.backdropMesh.visible,
+        environmentVisible: window.__OCTOBERLINE_211__.room.environment.visible,
+        exteriorVisible: window.__OCTOBERLINE_211__.room.exterior.visible,
       }));
       invariant(
         lowQualityState.quality === 'low'

@@ -1,5 +1,5 @@
 /**
- * Procedural, continuously reusable room and weather audio for Meridian No. 88.
+ * Procedural, continuously reusable room and weather audio for Octoberline 211.
  *
  * The constructor is deliberately silent. Call start() from a pointer or keyboard
  * gesture; browsers will then permit the AudioContext to resume. All sound sources
@@ -8,6 +8,7 @@
 
 export const ATMOSPHERE_WEATHER_MODES = Object.freeze([
   'quiet',
+  'autumn-wind',
   'rain',
   'snow',
   'nor-easter',
@@ -39,6 +40,16 @@ const WEATHER_PROFILES = Object.freeze({
     windGain: 0.006,
     rainFrequency: 2200,
     windFrequency: 230,
+  }),
+  'autumn-wind': Object.freeze({
+    rain: 0,
+    snow: 0,
+    wind: 0.38,
+    rainGain: 0,
+    snowGain: 0,
+    windGain: 0.015,
+    rainFrequency: 1900,
+    windFrequency: 305,
   }),
   rain: Object.freeze({
     rain: 1,

@@ -7,6 +7,9 @@ import {
   PaperLifecycleStore,
   createPaperLifecycleState,
   deserializePaperLifecycleState,
+  enumeratePaperSheets,
+  extractPaperFirstNonblankLine,
+  selectPaperSheet,
   serializePaperLifecycleState,
   validatePaperLifecycleState,
 } from './paper-lifecycle.js';
@@ -230,6 +233,90 @@ describe('PaperLifecycle', () => {
     const full = lifecycle.snapshot();
     expect(full.manuscript[0].page.content).toEqual({ marks: [{ character: 'A' }] });
   });
+
+  it('enumerates stable paper-desk summaries and selects any sheet by id', () => {
+    const lifecycle = createHarness();
+    const firstLine = [
+      { character: 'O', column: 4, line: 2, seed: 1 },
+      { character: 'L', column: 5, line: 2, seed: 2 },
+      { character: 'D', column: 6, line: 2, seed: 3 },
+      // The latest overstrike supplies the readable preview while both marks
+      // remain included in the physical impression count.
+      { character: 'N', column: 4, line: 2, seed: 4 },
+    ];
+    lifecycle.loadFreshSheet({ marks: firstLine }, { collection: 'drafts' });
+    lifecycle.extractInsertedSheet();
+    lifecycle.saveLooseSheetToManuscript({ title: 'Opening' });
+    lifecycle.loadFreshSheet({ marks: [{ character: 'X', column: 0, line: 0 }] });
+    lifecycle.extractInsertedSheet();
+    lifecycle.discardLooseSheet({ seed: 42 });
+    lifecycle.loadFreshSheet({ marks: [] }, { title: 'Current page' });
+
+    const catalog = lifecycle.listSheets();
+    expect(catalog.map(({ id, location }) => [id, location])).toEqual([
+      ['page-1', 'filed'],
+      ['page-2', 'discarded'],
+      ['page-3', 'loaded'],
+    ]);
+    expect(catalog[0]).toMatchObject({
+      sheetNumber: 1,
+      firstNonblankLine: 'NLD',
+      markCount: 4,
+      isBlank: false,
+      metadata: { collection: 'drafts', title: 'Opening' },
+    });
+    expect(catalog[2]).toMatchObject({ firstNonblankLine: '', markCount: 0, isBlank: true });
+    expect(Object.isFrozen(catalog)).toBe(true);
+    expect(Object.isFrozen(catalog[0])).toBe(true);
+
+    const filed = lifecycle.selectSheet('page-1');
+    const discarded = selectPaperSheet(lifecycle.state, 'page-2');
+    const loaded = lifecycle.selectSheet('page-3');
+    expect(filed).toMatchObject({
+      location: 'filed',
+      page: { id: 'page-1', content: { marks: firstLine } },
+      placement: { metadata: { title: 'Opening' } },
+    });
+    expect(discarded).toMatchObject({
+      location: 'discarded',
+      page: { id: 'page-2' },
+      placement: { crumple: { seed: 42 } },
+    });
+    expect(loaded).toMatchObject({ location: 'loaded', page: { id: 'page-3' } });
+    expect(Object.isFrozen(filed.page.content.marks)).toBe(true);
+
+    lifecycle.extractInsertedSheet();
+    expect(lifecycle.selectSheet('page-3')).toMatchObject({
+      location: 'loose',
+      placement: { source: 'platen' },
+    });
+    expect(lifecycle.listSheets({ locations: ['loose', 'discarded'] }).map(({ id }) => id)).toEqual([
+      'page-2',
+      'page-3',
+    ]);
+    expect(() => lifecycle.selectSheet('missing-page')).toThrowError(
+      expect.objectContaining({ code: 'page-not-found' }),
+    );
+  });
+
+  it('builds deterministic first-line previews from text and impression archives', () => {
+    expect(extractPaperFirstNonblankLine('\n\n  The quiet desk  \nSecond line')).toBe('The quiet desk');
+    expect(extractPaperFirstNonblankLine({
+      marks: [
+        { character: 'A', line: 1, column: 2 },
+        { character: 'C', line: 1, column: 4 },
+      ],
+    })).toBe('A C');
+    expect(extractPaperFirstNonblankLine({ text: 'Octoberline 211' }, { maxLength: 10 })).toBe('Octoberli…');
+
+    const lifecycle = createHarness();
+    lifecycle.loadFreshSheet({ marks: [{ character: 'Q', line: 0, column: 0 }] });
+    expect(enumeratePaperSheets(lifecycle.state, { order: 'newest' })[0]).toMatchObject({
+      id: 'page-1',
+      firstNonblankLine: 'Q',
+      markCount: 1,
+    });
+  });
 });
 
 describe('paper lifecycle serialization', () => {
@@ -239,7 +326,7 @@ describe('paper lifecycle serialization', () => {
 
     const serialized = serializePaperLifecycleState(lifecycle.state);
     expect(JSON.parse(serialized)).toMatchObject({
-      format: 'meridian-paper-lifecycle',
+      format: 'octoberline211-paper-lifecycle',
       storageVersion: 1,
       state: { schemaVersion: PAPER_LIFECYCLE_SCHEMA_VERSION },
     });
@@ -285,6 +372,43 @@ describe('paper lifecycle serialization', () => {
 });
 
 describe('PaperLifecycleStore crash recovery', () => {
+  it('opens the pre-rename Meridian archive and repairs it under the Octoberline key', () => {
+    const storage = new MemoryStorage();
+    const legacyState = {
+      ...createPaperLifecycleState({ updatedAt: 10, nextSheetNumber: 2 }),
+      revision: 3,
+      insertedSheet: {
+        id: 'legacy-meridian-page',
+        sheetNumber: 1,
+        createdAt: 8,
+        updatedAt: 9,
+        content: { marks: [{ character: 'M', column: 0, line: 0 }] },
+        metadata: { origin: 'v0.2.0' },
+      },
+    };
+    const legacyEnvelope = JSON.parse(serializePaperLifecycleState(legacyState));
+    legacyEnvelope.format = 'meridian-paper-lifecycle';
+    storage.setItem('meridian.paper-lifecycle.release-1', JSON.stringify(legacyEnvelope));
+
+    const migrated = new PaperLifecycleStore({
+      storage,
+      key: 'octoberline211.paper-lifecycle.release-1',
+    }).load();
+
+    expect(migrated).toMatchObject({
+      revision: 3,
+      insertedSheet: {
+        id: 'legacy-meridian-page',
+        content: { marks: [{ character: 'M' }] },
+      },
+    });
+    expect(storage.getItem('octoberline211.paper-lifecycle.release-1')).not.toBeNull();
+    expect(new PaperLifecycleStore({
+      storage,
+      key: 'octoberline211.paper-lifecycle.release-1',
+    }).load()).toEqual(migrated);
+  });
+
   it('recovers page contents from a newer journal when both committed manifests stay old', () => {
     const storage = new MemoryStorage();
     let timestamp = 50;

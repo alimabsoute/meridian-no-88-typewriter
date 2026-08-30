@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TypewriterDocument } from './typewriter-document.js';
 import { PaperRenderer } from './textures.js';
 import { TypewriterAudio } from './audio-engine.js';
-import { CODE_BY_CHARACTER, KEY_BY_CODE, TypewriterModel } from './typewriter-model.js';
+import { CODE_BY_CHARACTER, KEY_BY_CODE, TOUCH_PRESETS, TypewriterModel } from './typewriter-model.js';
 import {
   PaperLifecycle,
   PaperLifecycleStore,
@@ -15,9 +15,11 @@ import {
 import { PaperLifecycleView } from './paper-lifecycle-view.js';
 import { PhiladelphiaWritingRoom } from './philadelphia-writing-room.js';
 import { AtmosphereAudio } from './atmosphere-audio.js';
+import { BRAND, formatSheetExportFilename } from './brand.js';
 
-const STORAGE_KEY = 'meridian-typewriter-state-v1';
-const PAPER_STORAGE_KEY = 'meridian.paper-lifecycle.release-1';
+const STORAGE_KEY = BRAND.simulatorStorageKey;
+const PAPER_STORAGE_KEY = BRAND.paperStorageKey;
+const FIRST_SHEET_TUTORIAL_KEY = `${BRAND.storageNamespace}.first-sheet-tutorial.v1`;
 const requestedQuality = new URLSearchParams(window.location.search).get('quality');
 const lowQuality = requestedQuality === 'low';
 
@@ -139,16 +141,17 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x11191b);
 scene.fog = new THREE.FogExp2(0x11191b, 0.012);
 
-const camera = new THREE.PerspectiveCamera(37, window.innerWidth / window.innerHeight, 0.05, 80);
-camera.position.set(8.45, 5.85, 11.4);
+const compactLandingCamera = window.innerWidth <= 900;
+const camera = new THREE.PerspectiveCamera(compactLandingCamera ? 50 : 37, window.innerWidth / window.innerHeight, 0.05, 80);
+camera.position.set(...(compactLandingCamera ? [13.65, 6.48, 12.94] : [8.45, 5.85, 11.4]));
 
 const controls = new OrbitControls(camera, canvas);
 canvas.style.cursor = 'default';
-controls.target.set(0, 1.43, 0.55);
+controls.target.set(...(compactLandingCamera ? [4.15, 1.43, 0.55] : [0, 1.43, 0.55]));
 controls.enableDamping = true;
 controls.dampingFactor = 0.065;
 controls.minDistance = 6.4;
-controls.maxDistance = 13.5;
+controls.maxDistance = 16.5;
 controls.minPolarAngle = 0.5;
 controls.maxPolarAngle = 1.38;
 controls.minAzimuthAngle = -1.02;
@@ -182,9 +185,9 @@ paperLight.position.set(0.2, 5.1, 2.8);
 scene.add(paperLight);
 
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-const weatherMode = ['quiet', 'rain', 'snow', 'nor-easter', 'automatic'].includes(stored?.weatherMode)
+const weatherMode = ['quiet', 'autumn-wind', 'rain', 'snow', 'nor-easter', 'automatic'].includes(stored?.weatherMode)
   ? stored.weatherMode
-  : 'snow';
+  : 'autumn-wind';
 const uneaseMode = ['off', 'subtle', 'unsettling'].includes(stored?.uneaseMode)
   ? stored.uneaseMode
   : 'subtle';
@@ -221,11 +224,23 @@ const refs = Object.fromEntries([
   'position-readout', 'ribbon-readout', 'sheet-readout', 'escapement-status', 'escapement-gauge',
   'ribbon-status', 'ribbon-gauge', 'status-lamp', 'transcript', 'document-summary', 'margin-warning',
   'toast', 'screen-reader-status', 'sound-toggle', 'inspection-toggle', 'document-toggle', 'document-content',
-  'field-guide', 'intro-overlay', 'weather-select', 'unease-select', 'machine-volume', 'paper-volume', 'room-volume',
+  'field-guide', 'intro-overlay', 'intro-guide', 'weather-select', 'unease-select', 'machine-volume', 'paper-volume', 'room-volume',
   'weather-volume', 'unease-volume', 'release-sheet', 'paper-status', 'manuscript-count', 'discard-count',
   'keep-sheet', 'crumple-sheet', 'reinsert-sheet', 'load-sheet', 'recover-sheet', 'restore-manuscript',
-  'empty-wastebasket', 'archive-warning',
+  'empty-wastebasket', 'archive-warning', 'environment-summary',
+  'quiet-mode-toggle', 'input-state', 'input-status', 'mobile-view-select', 'mobile-mechanics-toggle',
+  'mobile-mechanics-close', 'atmosphere-pause',
+  'first-sheet-coach', 'coach-progress', 'coach-next', 'coach-skip', 'coach-dismiss', 'coach-open',
+  'force-status', 'left-margin-control', 'right-margin-control', 'left-margin-value', 'right-margin-value',
+  'tab-stop-summary', 'toggle-tab-stop', 'reset-tab-stops',
+  'paper-desk-list', 'paper-desk-count', 'paper-desk-preview', 'paper-export-appearance',
+  'paper-export-resolution', 'paper-export-format', 'export-selected-paper', 'print-selected-paper',
 ].map((id) => [id, document.getElementById(id)]));
+const app = document.getElementById('app');
+const documentTray = refs['document-toggle'].closest('.document-tray');
+const environmentPanel = document.querySelector('.environment-card');
+const audioMix = document.querySelector('.audio-mix');
+const mechanismCard = document.querySelector('.mechanism-card');
 
 let toastTimer = 0;
 let persistTimer = 0;
@@ -235,16 +250,88 @@ let inkMode = initialInkMode;
 let cameraMotion = null;
 let statusFlash = 0;
 let inspectionEnabled = false;
+let paperActionBusy = false;
+let quietModeEnabled = stored?.quietModeEnabled === true;
+let atmospherePaused = stored?.atmospherePaused === true;
+let quietIdleTimer = 0;
+let selectedPaperId = null;
+const paperThumbnailCache = new Map();
+let paperDeskRenderGeneration = 0;
 const backgroundLayers = [...document.querySelectorAll('.ui-layer:not(#intro-overlay)')];
 for (const layer of backgroundLayers) layer.inert = true;
+const introWindowWash = document.querySelector('.intro-window-wash');
+
+function varyIntroAtmosphereCycle() {
+  if (!introWindowWash || reducedMotionQuery.matches) return;
+  const duration = 18 + Math.random() * 4;
+  introWindowWash.style.setProperty('--intro-cycle-duration', `${duration.toFixed(2)}s`);
+}
+
+varyIntroAtmosphereCycle();
+introWindowWash?.addEventListener('animationiteration', varyIntroAtmosphereCycle);
+
+function syncInputStatus() {
+  const hasPaper = Boolean(lifecycle.getOverview().insertedSheet);
+  const ready = keyboardCaptured && hasPaper && !paperActionBusy;
+  refs['input-status'].textContent = ready ? 'READY TO TYPE' : hasPaper ? 'INPUT RELEASED' : 'PAPER REQUIRED';
+  refs['input-state'].classList.toggle('ready', ready);
+}
+
+function setKeyboardCaptured(captured) {
+  keyboardCaptured = Boolean(captured);
+  if (!keyboardCaptured) {
+    const mobileTypingField = document.getElementById('mobile-input');
+    if (document.activeElement === mobileTypingField) mobileTypingField.blur();
+  }
+  syncInputStatus();
+  return keyboardCaptured;
+}
+
+function inputSurfaceAvailable() {
+  return refs['intro-overlay'].classList.contains('dismissed')
+    && !refs['field-guide'].open
+    && !documentTray.classList.contains('open')
+    && !environmentPanel.open
+    && !audioMix.open
+    && !mechanismCard.classList.contains('mobile-open')
+    && Boolean(lifecycle.getOverview().insertedSheet)
+    && !paperActionBusy;
+}
+
+function canAcceptTyping() {
+  return keyboardCaptured && inputSurfaceAvailable();
+}
+
+function applyQuietWritingState(active) {
+  app.classList.toggle('quiet-writing-active', quietModeEnabled && active);
+}
+
+function scheduleQuietWriting() {
+  clearTimeout(quietIdleTimer);
+  if (!quietModeEnabled || !keyboardCaptured) return;
+  quietIdleTimer = setTimeout(() => applyQuietWritingState(true), 1350);
+}
+
+function revealQuietInterface() {
+  clearTimeout(quietIdleTimer);
+  applyQuietWritingState(false);
+}
+
+function setQuietMode(enabled, { persistState = true } = {}) {
+  quietModeEnabled = Boolean(enabled);
+  refs['quiet-mode-toggle'].setAttribute('aria-pressed', String(quietModeEnabled));
+  refs['quiet-mode-toggle'].textContent = quietModeEnabled ? 'QUIET ON' : 'QUIET MODE';
+  revealQuietInterface();
+  if (persistState) persist();
+  return quietModeEnabled;
+}
 
 function focusMachine() {
-  if (!refs['intro-overlay'].classList.contains('dismissed') || refs['field-guide'].open) return;
-  if (!lifecycle.getOverview().insertedSheet || paperActionBusy) {
-    keyboardCaptured = false;
+  if (!inputSurfaceAvailable()) {
+    setKeyboardCaptured(false);
     return;
   }
-  keyboardCaptured = true;
+  setKeyboardCaptured(true);
   canvas.tabIndex = 0;
   canvas.focus({ preventScroll: true });
 }
@@ -260,6 +347,92 @@ function announce(message) {
   refs['screen-reader-status'].textContent = '';
   requestAnimationFrame(() => { refs['screen-reader-status'].textContent = message; });
 }
+
+const FIRST_SHEET_ACTIONS = ['type', 'shift', 'return', 'bell', 'release'];
+let firstSheetStep = 0;
+
+function firstSheetTutorialState() {
+  try {
+    return localStorage.getItem(FIRST_SHEET_TUTORIAL_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function storeFirstSheetTutorialState(value) {
+  try {
+    localStorage.setItem(FIRST_SHEET_TUTORIAL_KEY, value);
+  } catch {
+    // The guide remains useful for the current session when storage is unavailable.
+  }
+}
+
+function syncFirstSheetCoach() {
+  const steps = [...refs['first-sheet-coach'].querySelectorAll('[data-coach-action]')];
+  steps.forEach((step, index) => {
+    const active = index === firstSheetStep;
+    step.classList.toggle('active', active);
+    if (active) step.setAttribute('aria-current', 'step');
+    else step.removeAttribute('aria-current');
+  });
+  refs['coach-progress'].textContent = `${String(Math.min(firstSheetStep + 1, steps.length)).padStart(2, '0')} / ${String(steps.length).padStart(2, '0')}`;
+  refs['coach-next'].textContent = firstSheetStep === steps.length - 1 ? 'FINISH' : firstSheetStep === 3 ? 'I HEAR IT' : 'NEXT';
+}
+
+function showFirstSheetCoach({ reset = false } = {}) {
+  if (reset) {
+    firstSheetStep = 0;
+    storeFirstSheetTutorialState('');
+  } else if (firstSheetTutorialState()) {
+    return false;
+  }
+  refs['first-sheet-coach'].hidden = false;
+  syncFirstSheetCoach();
+  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] span')?.textContent;
+  announce(`First-sheet guide available. ${activeStep || 'Use Next or Skip Guide to continue.'}`);
+  return true;
+}
+
+function finishFirstSheetCoach(state = 'complete') {
+  refs['first-sheet-coach'].hidden = true;
+  storeFirstSheetTutorialState(state);
+}
+
+function advanceFirstSheetCoach(action, { force = false } = {}) {
+  if (refs['first-sheet-coach'].hidden) return false;
+  if (!force && FIRST_SHEET_ACTIONS[firstSheetStep] !== action) return false;
+  if (firstSheetStep >= FIRST_SHEET_ACTIONS.length - 1) {
+    finishFirstSheetCoach('complete');
+    showToast('FIRST SHEET GUIDE COMPLETE', 1200);
+    announce('First sheet guide complete.');
+    return true;
+  }
+  firstSheetStep += 1;
+  syncFirstSheetCoach();
+  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] span')?.textContent;
+  if (activeStep) announce(`First-sheet guide step ${firstSheetStep + 1}. ${activeStep}`);
+  return true;
+}
+
+refs['coach-next'].addEventListener('click', () => {
+  advanceFirstSheetCoach(FIRST_SHEET_ACTIONS[firstSheetStep], { force: true });
+  focusMachine();
+});
+refs['coach-skip'].addEventListener('click', () => {
+  finishFirstSheetCoach('dismissed');
+  focusMachine();
+});
+refs['coach-dismiss'].addEventListener('click', () => {
+  finishFirstSheetCoach('dismissed');
+  focusMachine();
+});
+refs['coach-open'].addEventListener('click', () => {
+  refs['field-guide'].close('coach');
+  setTimeout(() => {
+    showFirstSheetCoach({ reset: true });
+    focusMachine();
+  }, 40);
+});
 
 function archiveWarningMessage(error) {
   if (error?.code === 'revision-conflict') {
@@ -340,6 +513,9 @@ function persist() {
         uneaseVolume: atmosphereAudio.volumes.unease,
         weatherMode: room.weatherPreset,
         uneaseMode: room.uneaseLevel,
+        quietModeEnabled,
+        atmospherePaused,
+        touchPreset: model.getTouchCalibration().preset,
       }));
     } catch {
       // The compact recovery copy is secondary to the versioned paper archive,
@@ -390,7 +566,242 @@ function updateDocumentUi() {
   document.getElementById('download-text').disabled = !activeRecord;
   document.getElementById('download-paper').disabled = !activeRecord;
   syncArchiveWarning();
+  syncInputStatus();
 }
+
+function rendererForPaperSelection(selection) {
+  const activeId = lifecycle.getOverview().insertedSheet?.id;
+  if (selection.summary.id === activeId) return { renderer: paperRenderer, temporary: false };
+  const selectedDocument = TypewriterDocument.deserialize(selection.page.content);
+  return { renderer: new PaperRenderer(selectedDocument), temporary: true };
+}
+
+function paperThumbnail(summary) {
+  const cacheKey = `${summary.markCount}:${summary.updatedAt}:${summary.location}:${summary.firstNonblankLine}`;
+  const cached = paperThumbnailCache.get(summary.id);
+  if (cached?.key === cacheKey) {
+    paperThumbnailCache.delete(summary.id);
+    paperThumbnailCache.set(summary.id, cached);
+    return cached.url;
+  }
+  const thumbnail = document.createElement('canvas');
+  thumbnail.width = 112;
+  thumbnail.height = 145;
+  const context = thumbnail.getContext('2d');
+  context.fillStyle = summary.location === 'discarded' ? '#d7ccb2' : '#e9dfc7';
+  context.fillRect(0, 0, thumbnail.width, thumbnail.height);
+  context.strokeStyle = 'rgba(119, 54, 40, 0.26)';
+  context.beginPath();
+  context.moveTo(17, 0);
+  context.lineTo(17, thumbnail.height);
+  context.stroke();
+  context.fillStyle = '#4d483e';
+  context.font = '8px "Special Elite", monospace';
+  context.fillText(`SHEET ${String(summary.sheetNumber).padStart(2, '0')}`, 24, 19);
+  const words = (summary.firstNonblankLine || 'Blank sheet').split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = `${line} ${word}`.trim();
+    if (context.measureText(candidate).width > 76 && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+    if (lines.length === 5) break;
+  }
+  if (line && lines.length < 5) lines.push(line);
+  lines.forEach((textLine, index) => context.fillText(textLine, 24, 40 + index * 13));
+  context.fillStyle = 'rgba(77, 72, 62, 0.34)';
+  for (let index = lines.length; index < 6; index += 1) {
+    context.fillRect(24, 40 + index * 13, 48 + (index % 3) * 9, 1);
+  }
+  const url = thumbnail.toDataURL('image/jpeg', 0.66);
+  paperThumbnailCache.set(summary.id, { key: cacheKey, url });
+  while (paperThumbnailCache.size > 32) {
+    paperThumbnailCache.delete(paperThumbnailCache.keys().next().value);
+  }
+  return url;
+}
+
+function schedulePaperThumbnails(tasks, generation) {
+  if (!tasks.length) return;
+  const schedule = typeof window.requestIdleCallback === 'function'
+    ? (callback) => window.requestIdleCallback(callback, { timeout: 80 })
+    : (callback) => setTimeout(() => callback({ didTimeout: true, timeRemaining: () => 0 }), 0);
+  const renderBatch = (deadline) => {
+    if (generation !== paperDeskRenderGeneration) return;
+    let completed = 0;
+    while (
+      tasks.length
+      && completed < 4
+      && (deadline.didTimeout || deadline.timeRemaining() > 3)
+    ) {
+      const { summary, thumb } = tasks.shift();
+      if (thumb.isConnected) thumb.style.backgroundImage = `url(${paperThumbnail(summary)})`;
+      completed += 1;
+    }
+    if (tasks.length && generation === paperDeskRenderGeneration) schedule(renderBatch);
+  };
+  schedule(renderBatch);
+}
+
+function selectedPaperRecord() {
+  if (!selectedPaperId) return null;
+  try {
+    return lifecycle.selectSheet(selectedPaperId);
+  } catch {
+    selectedPaperId = null;
+    return null;
+  }
+}
+
+function syncPaperDeskSelection() {
+  const selection = selectedPaperRecord();
+  refs['paper-desk-list'].querySelectorAll('.paper-card').forEach((card) => {
+    card.setAttribute('aria-pressed', String(card.dataset.pageId === selectedPaperId));
+  });
+  if (!selection) {
+    refs['paper-desk-preview'].textContent = 'Select a sheet to preview or export it.';
+    refs['export-selected-paper'].disabled = true;
+    refs['print-selected-paper'].disabled = true;
+    return;
+  }
+  const { summary } = selection;
+  const preview = summary.firstNonblankLine || 'Blank sheet';
+  refs['paper-desk-preview'].textContent = `SHEET ${String(summary.sheetNumber).padStart(2, '0')} · ${summary.location.toUpperCase()} · ${summary.markCount} IMPRESSION${summary.markCount === 1 ? '' : 'S'} · ${preview}`;
+  refs['export-selected-paper'].disabled = false;
+  refs['print-selected-paper'].disabled = false;
+}
+
+function syncPaperDeskUi() {
+  const generation = ++paperDeskRenderGeneration;
+  const sheets = lifecycle.listSheets({ order: 'newest', maxPreviewLength: 46 });
+  const availableIds = new Set(sheets.map((sheet) => sheet.id));
+  if (!selectedPaperId || !availableIds.has(selectedPaperId)) {
+    selectedPaperId = lifecycle.getOverview().insertedSheet?.id ?? sheets[0]?.id ?? null;
+  }
+  refs['paper-desk-count'].textContent = `${String(sheets.length).padStart(2, '0')} SHEET${sheets.length === 1 ? '' : 'S'}`;
+  const fragment = document.createDocumentFragment();
+  const thumbnailTasks = [];
+  for (const summary of sheets) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'paper-card';
+    card.dataset.pageId = summary.id;
+    card.dataset.location = summary.location;
+    card.setAttribute('aria-pressed', String(summary.id === selectedPaperId));
+    card.setAttribute('aria-describedby', 'paper-desk-preview');
+    card.setAttribute('aria-label', `Sheet ${summary.sheetNumber}, ${summary.location}, ${summary.markCount} impressions`);
+    const thumb = document.createElement('span');
+    thumb.className = 'paper-card-thumb';
+    thumb.dataset.location = summary.location.toUpperCase();
+    thumb.setAttribute('aria-hidden', 'true');
+    if (summary.id === selectedPaperId) thumb.style.backgroundImage = `url(${paperThumbnail(summary)})`;
+    else thumbnailTasks.push({ summary, thumb });
+    const copy = document.createElement('span');
+    copy.className = 'paper-card-copy';
+    const title = document.createElement('b');
+    title.textContent = `SHEET ${String(summary.sheetNumber).padStart(2, '0')}`;
+    const excerpt = document.createElement('small');
+    excerpt.textContent = summary.firstNonblankLine || 'Blank sheet';
+    copy.append(title, excerpt);
+    card.append(thumb, copy);
+    card.addEventListener('click', () => {
+      selectedPaperId = summary.id;
+      syncPaperDeskSelection();
+    });
+    fragment.append(card);
+  }
+  refs['paper-desk-list'].replaceChildren(fragment);
+  syncPaperDeskSelection();
+  schedulePaperThumbnails(thumbnailTasks, generation);
+}
+
+function selectedPaperExportOptions({ print = false } = {}) {
+  const format = refs['paper-export-format'].value;
+  return {
+    appearance: refs['paper-export-appearance'].value,
+    resolutionScale: Number(refs['paper-export-resolution'].value),
+    mimeType: print ? 'image/png' : `image/${format}`,
+    quality: 0.92,
+  };
+}
+
+function withSelectedPaperRenderer(callback) {
+  const selection = selectedPaperRecord();
+  if (!selection) return false;
+  const { renderer, temporary } = rendererForPaperSelection(selection);
+  try {
+    callback(renderer, selection);
+  } finally {
+    if (temporary) renderer.texture.dispose();
+  }
+  return true;
+}
+
+refs['export-selected-paper'].addEventListener('click', () => {
+  const exported = withSelectedPaperRenderer((renderer, selection) => {
+    const options = selectedPaperExportOptions();
+    const extension = refs['paper-export-format'].value;
+    renderer.download(formatSheetExportFilename(selection.summary.sheetNumber, extension), options);
+    showToast(`${options.appearance === 'carbon-copy' ? 'CARBON COPY' : 'PAPER'} EXPORTED · ${options.resolutionScale}×`, 1200);
+  });
+  if (!exported) showToast('SELECT A SHEET TO EXPORT', 900);
+});
+
+refs['print-selected-paper'].addEventListener('click', () => {
+  const selection = selectedPaperRecord();
+  if (!selection) {
+    showToast('SELECT A SHEET TO PRINT', 900);
+    return;
+  }
+  // Open synchronously while this click still carries popup permission. The
+  // comparatively expensive paper render happens only after the print view is
+  // safely available, and is capped at 2× for predictable memory use.
+  const printWindow = window.open('', '_blank', 'popup,width=920,height=1100');
+  if (!printWindow) {
+    showToast('ALLOW POP-UPS TO OPEN THE PRINT VIEW', 1500);
+    return;
+  }
+  printWindow.opener = null;
+  printWindow.document.title = `${BRAND.displayName} — Preparing sheet`;
+  const preparing = printWindow.document.createElement('p');
+  preparing.textContent = 'Preparing the paper for Print / Save PDF…';
+  preparing.style.cssText = 'font:16px Georgia,serif;padding:32px;color:#29251f';
+  printWindow.document.body.replaceChildren(preparing);
+  showToast('PREPARING PRINT VIEW · UP TO 2×', 1200);
+
+  setTimeout(() => {
+    const { renderer, temporary } = rendererForPaperSelection(selection);
+    try {
+      const printOptions = selectedPaperExportOptions({ print: true });
+      const payload = renderer.createBrowserPrintPayload({
+        ...printOptions,
+        resolutionScale: Math.min(2, printOptions.resolutionScale),
+        title: `${BRAND.displayName} — Sheet ${String(selection.summary.sheetNumber).padStart(2, '0')}`,
+      });
+      printWindow.document.title = payload.title;
+      const style = printWindow.document.createElement('style');
+      style.textContent = payload.cssText;
+      const image = printWindow.document.createElement('img');
+      image.alt = `Typewritten sheet ${selection.summary.sheetNumber}`;
+      image.src = payload.imageDataUrl;
+      image.addEventListener('load', () => {
+        printWindow.focus();
+        printWindow.print();
+      }, { once: true });
+      printWindow.document.head.replaceChildren(style);
+      printWindow.document.body.replaceChildren(image);
+    } catch {
+      printWindow.document.body.textContent = 'The print view could not be prepared. Close this window and export the sheet as an image instead.';
+      showToast('PRINT VIEW FAILED · IMAGE EXPORT IS STILL AVAILABLE', 1700);
+    } finally {
+      if (temporary) renderer.texture.dispose();
+    }
+  }, 0);
+});
 
 function handleStatus(event) {
   statusFlash = 1;
@@ -398,6 +809,7 @@ function handleStatus(event) {
     case 'bell':
       showToast('MARGIN BELL · FIVE SPACES REMAIN', 1400);
       announce('Margin bell. Five spaces remain.');
+      advanceFirstSheetCoach('bell');
       break;
     case 'margin-reached':
     case 'margin-lock':
@@ -408,6 +820,7 @@ function handleStatus(event) {
     case 'return-start':
       refs['margin-warning'].classList.remove('show');
       announce(`Carriage returning. Paper advancing to line ${event.line + 1}.`);
+      advanceFirstSheetCoach('return');
       break;
     case 'return-complete':
       showToast(`LINE ${String(event.line + 1).padStart(2, '0')} · CARRIAGE SET`, 850);
@@ -441,7 +854,6 @@ function handleStatus(event) {
   }
 }
 
-let paperActionBusy = false;
 const model = new TypewriterModel({
   scene,
   documentState: page,
@@ -450,16 +862,86 @@ const model = new TypewriterModel({
   onStatus: handleStatus,
   onChange: () => {
     updateDocumentUi();
+    syncMechanicalSettingsUi();
     persist();
   },
 });
 
 model.setInkMode(inkMode);
+const storedTouchPreset = typeof stored?.touchPreset === 'string'
+  && Object.prototype.hasOwnProperty.call(TOUCH_PRESETS, stored.touchPreset)
+  ? stored.touchPreset
+  : 'medium';
+model.setTouchPreset(storedTouchPreset, { emit: false });
+
+function syncMechanicalSettingsUi() {
+  const settings = model.getMechanicalSettings();
+  refs['force-status'].textContent = settings.touchPreset.toUpperCase();
+  document.querySelectorAll('[data-touch-preset]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.touchPreset === settings.touchPreset));
+  });
+  refs['left-margin-control'].value = String(settings.leftMargin);
+  refs['left-margin-control'].max = String(Math.max(0, settings.rightMargin - 1));
+  refs['right-margin-control'].value = String(settings.rightMargin);
+  refs['right-margin-control'].min = String(Math.min(page.columns, settings.leftMargin + 1));
+  refs['left-margin-value'].textContent = String(settings.leftMargin).padStart(2, '0');
+  refs['right-margin-value'].textContent = String(settings.rightMargin).padStart(2, '0');
+  refs['tab-stop-summary'].textContent = settings.tabStops.length
+    ? `TABS · ${settings.tabStops.map((stop) => String(stop).padStart(2, '0')).join(' / ')}`
+    : 'TABS · NONE SET';
+}
+
+function selectTouchPreset(preset) {
+  const calibration = model.setTouchPreset(preset);
+  syncMechanicalSettingsUi();
+  showToast(`TOUCH · ${calibration.name.toUpperCase()}`, 900);
+  persist();
+  return calibration;
+}
+
+document.querySelectorAll('[data-touch-preset]').forEach((button) => {
+  button.addEventListener('click', () => {
+    selectTouchPreset(button.dataset.touchPreset);
+    focusMachine();
+  });
+});
+
+for (const [id, side] of [['left-margin-control', 'left'], ['right-margin-control', 'right']]) {
+  refs[id].addEventListener('input', () => {
+    model.setMarginStop(side, Number(refs[id].value));
+    syncMechanicalSettingsUi();
+  });
+  refs[id].addEventListener('change', () => {
+    showToast(`${side.toUpperCase()} MARGIN · ${refs[id].value}`, 850);
+    focusMachine();
+  });
+}
+
+refs['toggle-tab-stop'].addEventListener('click', () => {
+  const column = Math.max(1, Math.min(page.columns, page.column));
+  const enabled = !page.tabStops.includes(column);
+  model.setTabStop(column, enabled);
+  syncMechanicalSettingsUi();
+  showToast(`TAB ${enabled ? 'SET' : 'CLEARED'} · COLUMN ${String(column).padStart(2, '0')}`, 1000);
+  focusMachine();
+});
+
+refs['reset-tab-stops'].addEventListener('click', () => {
+  const stops = [];
+  for (let column = 8; column < page.columns; column += 8) stops.push(column);
+  model.setTabStops(stops);
+  syncMechanicalSettingsUi();
+  showToast('8-COLUMN TAB STOPS RESTORED', 900);
+  focusMachine();
+});
+
+syncMechanicalSettingsUi();
 
 function handlePaperRitualEvent(event) {
   switch (event.type) {
     case 'extraction-start':
       announce('The sheet is leaving the platen.');
+      advanceFirstSheetCoach('release');
       break;
     case 'inspection-ready':
       showToast('SHEET RELEASED · KEEP, CRUMPLE, OR REINSERT', 1700);
@@ -542,6 +1024,12 @@ const CAMERA_PRESETS = {
   writer: {
     position: new THREE.Vector3(8.45, 5.85, 11.4),
     target: new THREE.Vector3(0, 1.43, 0.55),
+    fov: 37,
+  },
+  front: {
+    position: new THREE.Vector3(0, 5.45, 15.1),
+    target: new THREE.Vector3(0, 1.35, 0.55),
+    fov: 37,
   },
   mechanism: {
     position: new THREE.Vector3(7.2, 4.3, 7.0),
@@ -568,12 +1056,19 @@ function setCameraView(name, duration = 0.9) {
   cameraMotion = {
     fromPosition: camera.position.clone(),
     fromTarget: controls.target.clone(),
+    fromFov: camera.fov,
     toPosition: preset.position.clone(),
     toTarget: preset.target.clone(),
+    toFov: preset.fov ?? 37,
     elapsed: 0,
     duration: reduced ? 0.01 : duration,
   };
-  document.querySelectorAll('.view-button').forEach((button) => button.classList.toggle('active', button.dataset.view === name));
+  document.querySelectorAll('.view-button').forEach((button) => {
+    const active = button.dataset.view === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  refs['mobile-view-select'].value = name;
 }
 
 function updateCameraMotion(delta) {
@@ -583,7 +1078,91 @@ function updateCameraMotion(delta) {
   const eased = raw < 0.5 ? 4 * raw ** 3 : 1 - ((-2 * raw + 2) ** 3) / 2;
   camera.position.lerpVectors(cameraMotion.fromPosition, cameraMotion.toPosition, eased);
   controls.target.lerpVectors(cameraMotion.fromTarget, cameraMotion.toTarget, eased);
+  camera.fov = THREE.MathUtils.lerp(cameraMotion.fromFov, cameraMotion.toFov, eased);
+  camera.updateProjectionMatrix();
   if (raw >= 1) cameraMotion = null;
+}
+
+function setDocumentTrayOpen(open, { refocus = false } = {}) {
+  if (open) {
+    setEnvironmentPanelOpen(false);
+    setMobileMechanicsOpen(false);
+  }
+  documentTray.classList.toggle('open', open);
+  refs['document-toggle'].setAttribute('aria-expanded', String(open));
+  refs['document-content'].inert = !open;
+  refs['document-content'].setAttribute('aria-hidden', String(!open));
+  if (open) {
+    setKeyboardCaptured(false);
+    model.setShiftHeld(false);
+    syncPaperDeskUi();
+  } else if (refocus) {
+    focusMachine();
+  }
+  return open;
+}
+
+function setEnvironmentPanelOpen(open, { refocus = false } = {}) {
+  if (open) {
+    setDocumentTrayOpen(false);
+    setMobileMechanicsOpen(false);
+  }
+  environmentPanel.open = open;
+  if (open) {
+    setKeyboardCaptured(false);
+    model.setShiftHeld(false);
+  } else {
+    audioMix.open = false;
+    if (refocus) focusMachine();
+  }
+  return open;
+}
+
+function setMobileMechanicsOpen(open, { refocus = false } = {}) {
+  const expanded = Boolean(open);
+  if (expanded) {
+    setDocumentTrayOpen(false);
+    setEnvironmentPanelOpen(false);
+    audioMix.open = false;
+    setKeyboardCaptured(false);
+    model.setShiftHeld(false);
+  }
+  mechanismCard.classList.toggle('mobile-open', expanded);
+  refs['mobile-mechanics-toggle'].setAttribute('aria-expanded', String(expanded));
+  if (!expanded && refocus) focusMachine();
+  return expanded;
+}
+
+function dismissTransientPanels({ refocus = false } = {}) {
+  let dismissed = false;
+  if (documentTray.classList.contains('open')) {
+    setDocumentTrayOpen(false);
+    dismissed = true;
+  }
+  if (environmentPanel.open) {
+    setEnvironmentPanelOpen(false);
+    dismissed = true;
+  }
+  if (audioMix.open) {
+    audioMix.open = false;
+    dismissed = true;
+  }
+  if (mechanismCard.classList.contains('mobile-open')) {
+    setMobileMechanicsOpen(false);
+    dismissed = true;
+  }
+  if (dismissed && refocus) focusMachine();
+  return dismissed;
+}
+
+function setInspectionEnabled(enabled, { moveCamera = true } = {}) {
+  inspectionEnabled = enabled;
+  refs['inspection-toggle'].setAttribute('aria-pressed', String(enabled));
+  model.setInspection(enabled);
+  controls.enabled = enabled;
+  canvas.style.cursor = enabled ? 'grab' : 'default';
+  if (enabled && moveCamera) setCameraView('mechanism', 0.75);
+  return enabled;
 }
 
 function syncInkUi() {
@@ -614,17 +1193,31 @@ function syncAtmosphereUi() {
   refs['room-volume'].value = String(atmosphereAudio.volumes.room);
   refs['weather-volume'].value = String(atmosphereAudio.volumes.weather);
   refs['unease-volume'].value = String(atmosphereAudio.volumes.unease);
+  const weatherName = ({
+    quiet: 'CLEAR DUSK',
+    'autumn-wind': 'AUTUMN WIND',
+    rain: 'STEADY RAIN',
+    snow: 'FIRST SNOW',
+    'nor-easter': 'NOR’EASTER',
+  })[room.weatherPreset] ?? 'CLEAR DUSK';
+  refs['environment-summary'].textContent = `${weatherName} / ${room.uneaseLevel.toUpperCase()}`;
   const mark = document.querySelector('.weather-mark');
-  mark.textContent = ({ quiet: '◌', rain: '╱', snow: '❄', 'nor-easter': '※' })[room.weatherPreset] ?? '◌';
+  mark.textContent = ({ quiet: '◌', 'autumn-wind': '⌁', rain: '╱', snow: '❄', 'nor-easter': '※' })[room.weatherPreset] ?? '◌';
+  refs['atmosphere-pause'].setAttribute('aria-pressed', String(atmospherePaused));
+  refs['atmosphere-pause'].querySelector('b').textContent = atmospherePaused ? 'PAUSED' : 'RUNNING';
+  app.classList.toggle('atmosphere-paused', atmospherePaused);
 }
 
 syncAtmosphereUi();
+setQuietMode(quietModeEnabled, { persistState: false });
+syncInputStatus();
 
 refs['weather-select'].addEventListener('change', () => {
   const mode = room.setWeatherPreset(refs['weather-select'].value, { immediate: true });
   atmosphereAudio.setWeather(mode);
   syncAtmosphereUi();
-  showToast(`${mode === 'nor-easter' ? 'NOR’EASTER' : mode.toUpperCase()} AT THE WINDOW`, 1000);
+  const weatherLabel = ({ quiet: 'CLEAR DUSK', 'autumn-wind': 'AUTUMN WIND', rain: 'STEADY RAIN', snow: 'FIRST SNOW', 'nor-easter': 'NOR’EASTER' })[mode] ?? mode.toUpperCase();
+  showToast(`${weatherLabel} AT THE WINDOW`, 1000);
   persist();
 });
 
@@ -634,6 +1227,22 @@ refs['unease-select'].addEventListener('change', () => {
   syncAtmosphereUi();
   showToast(`UNEASE · ${level.toUpperCase()}`, 900);
   persist();
+});
+
+refs['atmosphere-pause'].addEventListener('click', () => {
+  atmospherePaused = !atmospherePaused;
+  syncAtmosphereUi();
+  showToast(atmospherePaused ? 'ATMOSPHERE MOTION PAUSED' : 'ATMOSPHERE MOTION RESUMED', 1000);
+  announce(atmospherePaused ? 'Atmosphere motion paused. Typewriter mechanics remain active.' : 'Atmosphere motion resumed.');
+  persist();
+  focusMachine();
+});
+
+refs['quiet-mode-toggle'].addEventListener('click', () => {
+  const enabled = setQuietMode(!quietModeEnabled);
+  showToast(enabled ? 'QUIET WRITING MODE ON' : 'QUIET WRITING MODE OFF', 900);
+  announce(enabled ? 'Quiet writing mode enabled. Controls will fade while typing and return with pointer movement.' : 'Quiet writing mode disabled.');
+  focusMachine();
 });
 
 refs['machine-volume'].addEventListener('input', () => {
@@ -653,9 +1262,28 @@ for (const [id, channel] of [['room-volume', 'room'], ['weather-volume', 'weathe
   });
 }
 
-document.getElementById('enter-studio').addEventListener('click', () => {
+const enterStudioButton = document.getElementById('enter-studio');
+
+function previewEntryKey() {
+  if (reducedMotionQuery.matches || refs['intro-overlay'].classList.contains('dismissed')) return;
+  model.animateKey('KeyO', 0.32, 0.62);
+}
+
+enterStudioButton.addEventListener('pointerenter', previewEntryKey);
+enterStudioButton.addEventListener('focus', previewEntryKey);
+
+enterStudioButton.addEventListener('click', () => {
+  if (refs['intro-overlay'].classList.contains('dismissed')) return;
+  enterStudioButton.disabled = true;
+  refs['intro-guide'].disabled = true;
+  enterStudioButton.setAttribute('aria-busy', 'true');
+  refs['intro-overlay'].classList.add('entering');
+  if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
+  setCameraView('front', 1.25);
   refs['intro-overlay'].classList.add('dismissed');
   refs['intro-overlay'].setAttribute('aria-hidden', 'true');
+  refs['intro-overlay'].inert = true;
+  app.classList.remove('landing-active');
   for (const layer of backgroundLayers) layer.inert = false;
   focusMachine();
   audio.start().catch(() => {});
@@ -663,6 +1291,7 @@ document.getElementById('enter-studio').addEventListener('click', () => {
   const inserted = lifecycle.getOverview().insertedSheet;
   showToast(inserted ? 'KEYBOARD CONNECTED · BEGIN TYPING' : 'PAPER PATH EMPTY · LOAD A FRESH SHEET', 1500);
   announce(inserted ? 'Typewriter active. Begin typing. Press Escape to release the keyboard.' : 'Typewriter active, but no sheet is loaded. Open Document and load fresh paper.');
+  if (inserted && !firstSheetTutorialState()) setTimeout(() => showFirstSheetCoach(), reducedMotionQuery.matches ? 250 : 1500);
 });
 
 refs['sound-toggle'].addEventListener('click', async () => {
@@ -676,39 +1305,102 @@ refs['sound-toggle'].addEventListener('click', async () => {
   focusMachine();
 });
 
-document.getElementById('guide-open').addEventListener('click', () => {
-  keyboardCaptured = false;
+function openFieldGuide(tabName = 'operation', { returnTo = 'machine' } = {}) {
+  dismissTransientPanels();
+  setKeyboardCaptured(false);
+  model.setShiftHeld(false);
+  refs['field-guide'].inert = false;
+  refs['field-guide'].dataset.returnTo = returnTo;
+  document.querySelector(`.guide-tab[data-tab="${tabName}"]`)?.click();
   refs['field-guide'].showModal();
-});
+  if (returnTo === 'intro') {
+    refs['intro-overlay'].setAttribute('aria-hidden', 'true');
+    refs['intro-overlay'].inert = true;
+  }
+}
+
+document.getElementById('guide-open').addEventListener('click', () => openFieldGuide('operation'));
+refs['intro-guide'].addEventListener('click', () => openFieldGuide('mechanics', { returnTo: 'intro' }));
 
 refs['field-guide'].addEventListener('close', () => {
+  if (refs['field-guide'].dataset.returnTo === 'intro' && !refs['intro-overlay'].classList.contains('dismissed')) {
+    refs['field-guide'].inert = true;
+    refs['intro-overlay'].setAttribute('aria-hidden', 'false');
+    refs['intro-overlay'].inert = false;
+    refs['intro-guide'].focus({ preventScroll: true });
+    return;
+  }
   focusMachine();
 });
 
-document.querySelectorAll('.guide-tab').forEach((tab) => {
+refs['field-guide'].addEventListener('click', (event) => {
+  if (event.target === refs['field-guide']) refs['field-guide'].close('backdrop');
+});
+
+const guideTabs = [...document.querySelectorAll('.guide-tab')];
+guideTabs.forEach((tab, tabIndex) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.guide-tab').forEach((item) => item.classList.toggle('active', item === tab));
-    document.querySelectorAll('.guide-page').forEach((pageElement) => pageElement.classList.toggle('active', pageElement.dataset.page === tab.dataset.tab));
+    guideTabs.forEach((item) => {
+      const active = item === tab;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-selected', String(active));
+      item.tabIndex = active ? 0 : -1;
+    });
+    document.querySelectorAll('.guide-page').forEach((pageElement) => {
+      const active = pageElement.dataset.page === tab.dataset.tab;
+      pageElement.classList.toggle('active', active);
+      pageElement.hidden = !active;
+    });
+  });
+  tab.addEventListener('keydown', (event) => {
+    let nextIndex = null;
+    if (event.key === 'ArrowRight') nextIndex = (tabIndex + 1) % guideTabs.length;
+    if (event.key === 'ArrowLeft') nextIndex = (tabIndex - 1 + guideTabs.length) % guideTabs.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = guideTabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    guideTabs[nextIndex].click();
+    guideTabs[nextIndex].focus();
   });
 });
 
 document.querySelectorAll('.view-button').forEach((button) => button.addEventListener('click', () => {
-  setCameraView(button.dataset.view);
+  dismissTransientPanels();
+  const view = button.dataset.view;
+  if ((view === 'writer' || view === 'front') && inspectionEnabled) {
+    setInspectionEnabled(false, { moveCamera: false });
+  }
+  setCameraView(view);
   focusMachine();
 }));
+refs['mobile-view-select'].addEventListener('change', () => {
+  dismissTransientPanels();
+  const view = refs['mobile-view-select'].value;
+  if ((view === 'writer' || view === 'front') && inspectionEnabled) {
+    setInspectionEnabled(false, { moveCamera: false });
+  }
+  setCameraView(view);
+  focusMachine();
+});
+refs['mobile-mechanics-toggle'].addEventListener('click', () => {
+  const open = !mechanismCard.classList.contains('mobile-open');
+  if (open) dismissTransientPanels();
+  setMobileMechanicsOpen(open, { refocus: !open });
+});
+refs['mobile-mechanics-close'].addEventListener('click', () => {
+  setMobileMechanicsOpen(false, { refocus: true });
+});
 document.getElementById('home-view').addEventListener('click', () => {
+  dismissTransientPanels();
+  if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
   setCameraView('writer');
   focusMachine();
 });
 
 refs['inspection-toggle'].addEventListener('click', () => {
   const enabled = refs['inspection-toggle'].getAttribute('aria-pressed') !== 'true';
-  inspectionEnabled = enabled;
-  refs['inspection-toggle'].setAttribute('aria-pressed', String(enabled));
-  model.setInspection(enabled);
-  controls.enabled = enabled;
-  canvas.style.cursor = enabled ? 'grab' : 'default';
-  if (enabled) setCameraView('mechanism', 0.75);
+  setInspectionEnabled(enabled);
   focusMachine();
 });
 
@@ -718,13 +1410,42 @@ document.querySelectorAll('.ink-button').forEach((button) => button.addEventList
 }));
 
 refs['document-toggle'].addEventListener('click', () => {
-  const tray = refs['document-toggle'].closest('.document-tray');
-  const open = !tray.classList.contains('open');
-  tray.classList.toggle('open', open);
-  refs['document-toggle'].setAttribute('aria-expanded', String(open));
-  refs['document-content'].inert = !open;
-  refs['document-content'].setAttribute('aria-hidden', String(!open));
-  focusMachine();
+  const open = !documentTray.classList.contains('open');
+  setDocumentTrayOpen(open, { refocus: !open });
+});
+
+environmentPanel.addEventListener('toggle', () => {
+  if (environmentPanel.open) {
+    setDocumentTrayOpen(false);
+    setKeyboardCaptured(false);
+    model.setShiftHeld(false);
+  } else {
+    audioMix.open = false;
+  }
+});
+
+audioMix.addEventListener('toggle', () => {
+  if (!audioMix.open) return;
+  setDocumentTrayOpen(false);
+  setKeyboardCaptured(false);
+  model.setShiftHeld(false);
+});
+
+document.addEventListener('pointerdown', (event) => {
+  if (!refs['intro-overlay'].classList.contains('dismissed') || refs['field-guide'].open) return;
+  if (environmentPanel.open && !environmentPanel.contains(event.target)) {
+    setEnvironmentPanelOpen(false);
+  }
+  if (documentTray.classList.contains('open') && !documentTray.contains(event.target)) {
+    setDocumentTrayOpen(false);
+  }
+  if (
+    mechanismCard.classList.contains('mobile-open')
+    && !mechanismCard.contains(event.target)
+    && !refs['mobile-mechanics-toggle'].contains(event.target)
+  ) {
+    setMobileMechanicsOpen(false);
+  }
 });
 
 function downloadText() {
@@ -733,7 +1454,7 @@ function downloadText() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `meridian-sheet-${String(page.sheetNumber).padStart(2, '0')}.txt`;
+  link.download = formatSheetExportFilename(page.sheetNumber, 'txt');
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   showToast('TRANSCRIPT SAVED', 900);
@@ -744,7 +1465,7 @@ document.getElementById('download-text').addEventListener('click', () => {
   focusMachine();
 });
 document.getElementById('download-paper').addEventListener('click', () => {
-  paperRenderer.download(`meridian-sheet-${String(page.sheetNumber).padStart(2, '0')}.png`);
+  paperRenderer.download(formatSheetExportFilename(page.sheetNumber, 'png'));
   showToast('HIGH-RESOLUTION PAPER SAVED', 1000);
   focusMachine();
 });
@@ -756,8 +1477,9 @@ function beginPaperAction() {
     return false;
   }
   paperActionBusy = true;
-  keyboardCaptured = false;
+  setKeyboardCaptured(false);
   model.setShiftHeld(false);
+  if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
   updateDocumentUi();
   return true;
 }
@@ -765,8 +1487,9 @@ function beginPaperAction() {
 function finishPaperAction({ refocus = false } = {}) {
   paperActionBusy = false;
   updateDocumentUi();
+  if (documentTray.classList.contains('open')) syncPaperDeskUi();
   persist();
-  if (refocus) focusMachine();
+  if (refocus) setDocumentTrayOpen(false, { refocus: true });
 }
 
 function installDocumentFromRecord(record, { animateLoad = false, visible = true } = {}) {
@@ -779,6 +1502,7 @@ function installDocumentFromRecord(record, { animateLoad = false, visible = true
   if (['black', 'red', 'stencil'].includes(restoredInkMode)) inkMode = restoredInkMode;
   model.setInkMode(inkMode);
   syncInkUi();
+  syncMechanicalSettingsUi();
 }
 
 refs['release-sheet'].addEventListener('click', async () => {
@@ -986,20 +1710,33 @@ refs['empty-wastebasket'].addEventListener('click', () => {
 });
 
 function shouldIgnoreKeyboard(event) {
-  if (!keyboardCaptured || refs['field-guide'].open) return true;
-  if (!lifecycle.getOverview().insertedSheet || paperActionBusy) return true;
+  if (!canAcceptTyping()) return true;
   if (event.ctrlKey || event.metaKey || event.altKey) return true;
   const target = event.target;
   return target instanceof HTMLInputElement
     || target instanceof HTMLTextAreaElement
     || target instanceof HTMLSelectElement
+    || (target instanceof HTMLElement && target.tagName === 'SUMMARY')
     || target instanceof HTMLButtonElement
     || target instanceof HTMLAnchorElement;
 }
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    keyboardCaptured = false;
+    revealQuietInterface();
+    if (!refs['intro-overlay'].classList.contains('dismissed')) return;
+    if (refs['field-guide'].open) return;
+    if (dismissTransientPanels({ refocus: true })) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      event.target instanceof HTMLInputElement
+      || event.target instanceof HTMLTextAreaElement
+      || event.target instanceof HTMLSelectElement
+      || (event.target instanceof HTMLElement && event.target.tagName === 'SUMMARY')
+    ) return;
+    setKeyboardCaptured(false);
     model.setShiftHeld(false);
     showToast('KEYBOARD RELEASED · CLICK THE MACHINE TO RECONNECT', 1600);
     announce('Typewriter keyboard released. Click the machine to reconnect.');
@@ -1009,6 +1746,7 @@ window.addEventListener('keydown', (event) => {
 
   if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
     model.setShiftHeld(true, event.code);
+    advanceFirstSheetCoach('shift');
     return;
   }
   if (event.code === 'CapsLock') {
@@ -1019,21 +1757,25 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'Space') {
     event.preventDefault();
     model.queueSpace();
+    scheduleQuietWriting();
     return;
   }
   if (event.code === 'Enter' || event.code === 'NumpadEnter') {
     event.preventDefault();
     model.queueReturn();
+    scheduleQuietWriting();
     return;
   }
   if (event.code === 'Backspace') {
     event.preventDefault();
     model.queueBackspace();
+    scheduleQuietWriting();
     return;
   }
   if (event.code === 'Tab') {
     event.preventDefault();
     model.queueTab();
+    scheduleQuietWriting();
     return;
   }
   if (event.code === 'Delete') {
@@ -1051,8 +1793,10 @@ window.addEventListener('keydown', (event) => {
     const expectedCode = CODE_BY_CHARACTER.get(event.key);
     const character = expectedCode ? event.key : (event.shiftKey ? KEY_BY_CODE.get(event.code).upper : KEY_BY_CODE.get(event.code).lower);
     model.queueCharacter(character, expectedCode || event.code);
+    advanceFirstSheetCoach('type');
+    scheduleQuietWriting();
   } else if (event.key.length === 1) {
-    showToast(`“${event.key}” IS NOT AVAILABLE ON THIS MERIDIAN LAYOUT`, 1400);
+    showToast(`“${event.key}” IS NOT AVAILABLE ON THE OCTOBERLINE 211 LAYOUT`, 1400);
   }
 });
 
@@ -1073,9 +1817,9 @@ reducedMotionQuery.addEventListener?.('change', (event) => room.setReducedMotion
 const mobileInput = document.getElementById('mobile-input');
 
 function queueMobileText(text) {
-  if (!lifecycle.getOverview().insertedSheet || paperActionBusy) {
-    showToast('LOAD PAPER BEFORE TYPING', 900);
-    return;
+  if (!canAcceptTyping()) {
+    showToast(lifecycle.getOverview().insertedSheet ? 'INPUT RELEASED · TAP THE TYPE FIELD TO RECONNECT' : 'LOAD PAPER BEFORE TYPING', 1100);
+    return false;
   }
   for (const character of text) {
     if (character === '\n') model.queueReturn();
@@ -1083,24 +1827,41 @@ function queueMobileText(text) {
     else {
       const code = CODE_BY_CHARACTER.get(character);
       if (code) model.queueCharacter(character, code);
-      else showToast(`“${character}” IS NOT AVAILABLE ON THIS MERIDIAN LAYOUT`, 1200);
+      else showToast(`“${character}” IS NOT AVAILABLE ON THE OCTOBERLINE 211 LAYOUT`, 1200);
     }
   }
+  if (text.length) {
+    advanceFirstSheetCoach('type');
+    scheduleQuietWriting();
+  }
+  return true;
 }
 
 mobileInput.addEventListener('focus', () => {
-  keyboardCaptured = true;
+  if (!inputSurfaceAvailable()) {
+    setKeyboardCaptured(false);
+    showToast(lifecycle.getOverview().insertedSheet ? 'CLOSE THE OPEN PANEL BEFORE TYPING' : 'LOAD PAPER BEFORE TYPING', 1100);
+    return;
+  }
+  setKeyboardCaptured(true);
   if (!audio.context) audio.start().catch(() => {});
 });
 
 mobileInput.addEventListener('beforeinput', (event) => {
   if (!event.cancelable) return;
+  if (!canAcceptTyping()) {
+    event.preventDefault();
+    mobileInput.value = '';
+    return;
+  }
   if (event.inputType === 'deleteContentBackward') {
     event.preventDefault();
     model.queueBackspace();
+    scheduleQuietWriting();
   } else if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
     event.preventDefault();
     model.queueReturn();
+    scheduleQuietWriting();
   } else if (event.data) {
     event.preventDefault();
     queueMobileText(event.data);
@@ -1108,22 +1869,32 @@ mobileInput.addEventListener('beforeinput', (event) => {
 });
 
 mobileInput.addEventListener('keydown', (event) => {
+  if (!canAcceptTyping()) {
+    if (event.key === 'Enter' || event.key === 'Backspace' || event.key.length === 1) event.preventDefault();
+    return;
+  }
   if (event.key === 'Enter') {
     event.preventDefault();
     model.queueReturn();
+    scheduleQuietWriting();
   } else if (event.key === 'Backspace') {
     event.preventDefault();
     model.queueBackspace();
+    scheduleQuietWriting();
   }
 });
 
 mobileInput.addEventListener('input', () => {
-  if (mobileInput.value) queueMobileText(mobileInput.value);
+  if (mobileInput.value && canAcceptTyping()) queueMobileText(mobileInput.value);
   mobileInput.value = '';
 });
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+const marginDragPoint = new THREE.Vector3();
+const marginDragNormal = new THREE.Vector3();
+const marginDragQuaternion = new THREE.Quaternion();
+let marginDrag = null;
 
 function updatePointer(event) {
   const rect = canvas.getBoundingClientRect();
@@ -1138,10 +1909,59 @@ function firstInteractiveHit(event) {
   return raycaster.intersectObjects(targets, false)[0]?.object ?? null;
 }
 
+function beginMarginDrag(hit, event) {
+  const side = hit.userData.marginSide;
+  if (!side || !model.marginStops?.[side]) return false;
+  const worldPoint = model.marginStops[side].getWorldPosition(new THREE.Vector3());
+  model.carriage.getWorldQuaternion(marginDragQuaternion);
+  marginDragNormal.set(0, 1, 0).applyQuaternion(marginDragQuaternion).normalize();
+  marginDrag = {
+    side,
+    plane: new THREE.Plane().setFromNormalAndCoplanarPoint(marginDragNormal, worldPoint),
+    pointerId: event.pointerId,
+    controlsEnabled: controls.enabled,
+  };
+  controls.enabled = false;
+  canvas.setPointerCapture?.(event.pointerId);
+  canvas.style.cursor = 'ew-resize';
+  announce(`${side} margin stop selected. Drag horizontally to reposition it.`);
+  return true;
+}
+
+function updateMarginDrag(event) {
+  if (!marginDrag) return false;
+  updatePointer(event);
+  if (!raycaster.ray.intersectPlane(marginDrag.plane, marginDragPoint)) return false;
+  const carriagePoint = model.carriage.worldToLocal(marginDragPoint.clone());
+  model.setMarginStopFromLocalX(marginDrag.side, carriagePoint.x);
+  syncMechanicalSettingsUi();
+  return true;
+}
+
+function finishMarginDrag(event) {
+  if (!marginDrag || (event.pointerId !== undefined && event.pointerId !== marginDrag.pointerId)) return false;
+  const completedDrag = marginDrag;
+  const side = completedDrag.side;
+  marginDrag = null;
+  controls.enabled = completedDrag.controlsEnabled;
+  if (canvas.hasPointerCapture?.(completedDrag.pointerId)) {
+    canvas.releasePointerCapture(completedDrag.pointerId);
+  }
+  canvas.style.cursor = inspectionEnabled ? 'grab' : 'default';
+  const column = model.getMechanicalSettings()[`${side}Margin`];
+  showToast(`${side.toUpperCase()} MARGIN · ${String(column).padStart(2, '0')}`, 900);
+  announce(`${side} margin set to column ${column}.`);
+  return true;
+}
+
 canvas.addEventListener('pointerdown', (event) => {
   if (!refs['intro-overlay'].classList.contains('dismissed')) return;
+  if (dismissTransientPanels({ refocus: true })) {
+    event.preventDefault();
+    return;
+  }
   if (!keyboardCaptured) {
-    keyboardCaptured = true;
+    setKeyboardCaptured(true);
     showToast('KEYBOARD RECONNECTED', 700);
   }
   canvas.focus({ preventScroll: true });
@@ -1150,7 +1970,9 @@ canvas.addEventListener('pointerdown', (event) => {
   const hit = firstInteractiveHit(event);
   if (!hit) return;
   const paperTarget = paperView.resolveRaycastTarget(hit);
-  if (paperTarget?.action === 'recover-page') {
+  if (hit.userData.specialAction === 'margin-stop') {
+    if (beginMarginDrag(hit, event)) event.preventDefault();
+  } else if (paperTarget?.action === 'recover-page') {
     recoverDiscardById(paperTarget.pageId);
     event.preventDefault();
   } else if (paperTarget?.action === 'browse-manuscript') {
@@ -1174,9 +1996,12 @@ canvas.addEventListener('pointerdown', (event) => {
       return;
     }
     model.commandFromPointer(hit.userData.keyRecord);
+    advanceFirstSheetCoach('type');
+    scheduleQuietWriting();
     event.preventDefault();
   } else if (hit.userData.specialAction === 'return') {
     model.queueReturn();
+    scheduleQuietWriting();
     event.preventDefault();
   } else if (hit.userData.specialAction === 'ink-cycle') {
     const sequence = ['black', 'red', 'stencil'];
@@ -1185,15 +2010,46 @@ canvas.addEventListener('pointerdown', (event) => {
   } else if (hit.userData.specialAction === 'ribbon-reverse') {
     model.reverseRibbonManually();
     event.preventDefault();
+  } else if (hit.userData.specialAction === 'touch-cycle') {
+    const calibration = model.cycleTouchPreset();
+    syncMechanicalSettingsUi();
+    showToast(`TOUCH · ${calibration.name.toUpperCase()}`, 900);
+    persist();
+    event.preventDefault();
   }
 });
 
 let hoverFrame = 0;
 canvas.addEventListener('pointermove', (event) => {
+  if (marginDrag) {
+    updateMarginDrag(event);
+    event.preventDefault();
+    return;
+  }
+  if (app.classList.contains('quiet-writing-active')) revealQuietInterface();
   cancelAnimationFrame(hoverFrame);
   hoverFrame = requestAnimationFrame(() => {
     canvas.style.cursor = firstInteractiveHit(event) ? 'pointer' : inspectionEnabled ? 'grab' : 'default';
   });
+});
+canvas.addEventListener('pointerup', finishMarginDrag);
+canvas.addEventListener('pointercancel', finishMarginDrag);
+canvas.addEventListener('lostpointercapture', finishMarginDrag);
+
+window.addEventListener('blur', (event) => {
+  finishMarginDrag(event);
+});
+
+window.addEventListener('pointermove', () => {
+  if (app.classList.contains('quiet-writing-active')) revealQuietInterface();
+}, { passive: true });
+
+window.addEventListener('pointerdown', () => {
+  if (app.classList.contains('quiet-writing-active')) revealQuietInterface();
+}, { passive: true });
+
+window.addEventListener('focusin', () => {
+  if (app.classList.contains('quiet-writing-active')) revealQuietInterface();
 });
 
 canvas.addEventListener('mouseleave', () => { canvas.style.cursor = inspectionEnabled ? 'grab' : 'default'; });
@@ -1202,6 +2058,12 @@ canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 function resize() {
   const width = window.innerWidth;
   const height = window.innerHeight;
+  if (!refs['intro-overlay'].classList.contains('dismissed') && !cameraMotion) {
+    const compact = width <= 900;
+    camera.position.set(...(compact ? [13.65, 6.48, 12.94] : [8.45, 5.85, 11.4]));
+    controls.target.set(...(compact ? [4.15, 1.43, 0.55] : [0, 1.43, 0.55]));
+    camera.fov = compact ? 50 : 37;
+  }
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
@@ -1240,8 +2102,10 @@ function animate(now) {
   lastTime = now;
   model.update(delta);
   paperView.update(delta);
-  room.update(delta);
-  atmosphereAudio.update(delta, room.getState());
+  if (!atmospherePaused) {
+    room.update(delta);
+    atmosphereAudio.update(delta, room.getState());
+  }
   updateCameraMotion(delta);
   controls.update();
   updateLiveUi(delta);
@@ -1265,15 +2129,21 @@ if (renderer.compileAsync) {
   renderer.compileAsync(scene, camera).catch(() => {});
 }
 
-window.__MERIDIAN__ = {
+window[BRAND.browserNamespace] = {
   model,
   audio,
   camera,
+  controls,
+  get keyboardCaptured() { return keyboardCaptured; },
+  get marginDragActive() { return Boolean(marginDrag); },
+  get paperThumbnailCacheSize() { return paperThumbnailCache.size; },
   get document() { return page; },
   lifecycle,
   paperView,
   room,
   atmosphereAudio,
+  get quietModeEnabled() { return quietModeEnabled; },
+  get atmospherePaused() { return atmospherePaused; },
   get paperState() { return lifecycle.snapshot(); },
   type(text) {
     if (!lifecycle.getOverview().insertedSheet || paperActionBusy) return false;
@@ -1299,5 +2169,14 @@ window.__MERIDIAN__ = {
     atmosphereAudio.setUnease(result);
     refs['unease-select'].value = result;
     return result;
+  },
+  setQuietMode(enabled) {
+    return setQuietMode(enabled);
+  },
+  setAtmospherePaused(paused) {
+    atmospherePaused = Boolean(paused);
+    syncAtmosphereUi();
+    persist();
+    return atmospherePaused;
   },
 };

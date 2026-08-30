@@ -1,12 +1,20 @@
 export const PAPER_LIFECYCLE_SCHEMA_VERSION = 1;
 export const PAPER_LIFECYCLE_STORAGE_VERSION = 1;
-export const DEFAULT_PAPER_LIFECYCLE_KEY = 'meridian.paper-lifecycle';
+export const DEFAULT_PAPER_LIFECYCLE_KEY = 'octoberline211.paper-lifecycle';
+export const PAPER_SHEET_LOCATIONS = Object.freeze(['loaded', 'loose', 'filed', 'discarded']);
 
-const STORAGE_FORMAT = 'meridian-paper-lifecycle';
-const MANIFEST_STORAGE_FORMAT = 'meridian-paper-lifecycle-manifest';
+const STORAGE_FORMAT = 'octoberline211-paper-lifecycle';
+const MANIFEST_STORAGE_FORMAT = 'octoberline211-paper-lifecycle-manifest';
 const MANIFEST_STORAGE_VERSION = 2;
-const PAGE_STORAGE_FORMAT = 'meridian-paper-lifecycle-page';
+const PAGE_STORAGE_FORMAT = 'octoberline211-paper-lifecycle-page';
 const PAGE_STORAGE_VERSION = 1;
+const LEGACY_STORAGE_FORMAT = 'meridian-paper-lifecycle';
+const LEGACY_MANIFEST_STORAGE_FORMAT = 'meridian-paper-lifecycle-manifest';
+const LEGACY_PAGE_STORAGE_FORMAT = 'meridian-paper-lifecycle-page';
+const LEGACY_STORAGE_KEYS = Object.freeze(new Map([
+  ['octoberline211.paper-lifecycle', ['meridian.paper-lifecycle']],
+  ['octoberline211.paper-lifecycle.release-1', ['meridian.paper-lifecycle.release-1']],
+]));
 
 const TYPEWRITER_DOCUMENT_FIELDS = [
   'columns',
@@ -245,7 +253,7 @@ export function deserializePaperLifecycleState(serialized) {
   } catch (error) {
     throw new PaperPersistenceError('corrupt-record', 'Paper lifecycle record is not valid JSON', error);
   }
-  if (!envelope || envelope.format !== STORAGE_FORMAT) {
+  if (!envelope || ![STORAGE_FORMAT, LEGACY_STORAGE_FORMAT].includes(envelope.format)) {
     throw new PaperPersistenceError('corrupt-record', 'Paper lifecycle storage format is invalid');
   }
   if (envelope.storageVersion !== PAPER_LIFECYCLE_STORAGE_VERSION) {
@@ -359,7 +367,8 @@ function deserializePageBlob(serialized, pageRef) {
   } catch (error) {
     throw new PaperPersistenceError('corrupt-page', `Stored page ${pageRef.id} is not valid JSON`, error);
   }
-  if (envelope?.format !== PAGE_STORAGE_FORMAT || envelope.storageVersion !== PAGE_STORAGE_VERSION) {
+  if (![PAGE_STORAGE_FORMAT, LEGACY_PAGE_STORAGE_FORMAT].includes(envelope?.format)
+    || envelope.storageVersion !== PAGE_STORAGE_VERSION) {
     throw new PaperPersistenceError('corrupt-page', `Stored page ${pageRef.id} has an invalid format`);
   }
   if (envelope.pageId !== pageRef.id) {
@@ -388,7 +397,8 @@ function parseManifestEnvelope(serialized) {
   } catch (error) {
     throw new PaperPersistenceError('corrupt-record', 'Paper lifecycle manifest is not valid JSON', error);
   }
-  if (envelope?.format !== MANIFEST_STORAGE_FORMAT || envelope.storageVersion !== MANIFEST_STORAGE_VERSION) {
+  if (![MANIFEST_STORAGE_FORMAT, LEGACY_MANIFEST_STORAGE_FORMAT].includes(envelope?.format)
+    || envelope.storageVersion !== MANIFEST_STORAGE_VERSION) {
     throw new PaperPersistenceError('unsupported-storage-version', 'Paper lifecycle manifest version is unsupported');
   }
   if (checksum(JSON.stringify(envelope.state)) !== envelope.checksum) {
@@ -431,6 +441,13 @@ export class PaperLifecycleStore {
     this.key = options.key ?? DEFAULT_PAPER_LIFECYCLE_KEY;
     this.journalKey = `${this.key}.journal`;
     this.backupKey = `${this.key}.backup`;
+    const legacyKeys = options.legacyKeys ?? LEGACY_STORAGE_KEYS.get(this.key) ?? [];
+    if (!Array.isArray(legacyKeys)
+      || legacyKeys.some((key) => typeof key !== 'string' || !key || key === this.key)
+      || new Set(legacyKeys).size !== legacyKeys.length) {
+      throw new PaperPersistenceError('invalid-storage-key', 'Legacy paper storage keys must be unique non-empty strings');
+    }
+    this.legacyKeys = [...new Set(legacyKeys)];
     this.knownRevision = null;
     this.pageRefs = new Map();
     this.referencedBlobKeys = new Set();
@@ -498,7 +515,7 @@ export class PaperLifecycleStore {
       const serialized = this.storage.getItem(key);
       if (serialized === null) return null;
       const parsed = JSON.parse(serialized);
-      if (parsed?.format === MANIFEST_STORAGE_FORMAT) {
+      if ([MANIFEST_STORAGE_FORMAT, LEGACY_MANIFEST_STORAGE_FORMAT].includes(parsed?.format)) {
         const manifestState = parseManifestEnvelope(serialized);
         if (!hydrate) return { key, revision: manifestState.revision, serialized, kind: 'manifest' };
         const hydrated = this.hydrateManifestState(manifestState);
@@ -531,17 +548,28 @@ export class PaperLifecycleStore {
   }
 
   records({ hydrate = true, includeJournal = true } = {}) {
-    const keys = includeJournal
-      ? [this.key, this.journalKey, this.backupKey]
-      : [this.key, this.backupKey];
+    const bases = [this.key, ...this.legacyKeys];
+    const keys = bases.flatMap((base) => (includeJournal
+      ? [base, `${base}.journal`, `${base}.backup`]
+      : [base, `${base}.backup`]));
     return keys.map((key) => this.readRecord(key, { hydrate })).filter(Boolean);
   }
 
   sortRecords(records) {
-    const preference = new Map([[this.journalKey, 3], [this.key, 2], [this.backupKey, 1]]);
+    const preference = new Map();
+    [...this.legacyKeys].reverse().forEach((base, index) => {
+      const score = index * 3;
+      preference.set(`${base}.journal`, score + 3);
+      preference.set(base, score + 2);
+      preference.set(`${base}.backup`, score + 1);
+    });
+    const currentScore = this.legacyKeys.length * 3;
+    preference.set(this.journalKey, currentScore + 3);
+    preference.set(this.key, currentScore + 2);
+    preference.set(this.backupKey, currentScore + 1);
     return records.sort(
       (left, right) => right.revision - left.revision
-        || preference.get(right.key) - preference.get(left.key),
+        || (preference.get(right.key) ?? 0) - (preference.get(left.key) ?? 0),
     );
   }
 
@@ -792,9 +820,11 @@ export class PaperLifecycleStore {
     for (const record of this.records()) {
       for (const key of record.blobKeys ?? []) referenced.add(key);
     }
-    this.storage.removeItem(this.journalKey);
-    this.storage.removeItem(this.key);
-    this.storage.removeItem(this.backupKey);
+    for (const base of [this.key, ...this.legacyKeys]) {
+      this.storage.removeItem(`${base}.journal`);
+      this.storage.removeItem(base);
+      this.storage.removeItem(`${base}.backup`);
+    }
     this.cleanupBlobs(referenced);
     this.knownRevision = null;
     this.pageRefs.clear();
@@ -815,6 +845,200 @@ function deepFreezeJson(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreezeJson(child);
   return Object.freeze(value);
+}
+
+function truncatePreview(text, maxLength) {
+  const characters = [...text];
+  if (characters.length <= maxLength) return text;
+  return `${characters.slice(0, Math.max(0, maxLength - 1)).join('')}…`;
+}
+
+function firstNonblankTextLine(text, maxLength) {
+  const line = String(text)
+    .split(/\r?\n/u)
+    .map((candidate) => candidate.trim())
+    .find(Boolean) ?? '';
+  return truncatePreview(line, maxLength);
+}
+
+function firstNonblankMarkLine(marks, maxLength) {
+  const rows = new Map();
+  marks.forEach((mark, index) => {
+    if (!mark || typeof mark.character !== 'string' || !mark.character) return;
+    const line = Number.isSafeInteger(mark.line) && mark.line >= 0 ? mark.line : 0;
+    const column = Number.isSafeInteger(mark.column) && mark.column >= 0 ? mark.column : index;
+    if (!rows.has(line)) rows.set(line, new Map());
+    // Later marks replace earlier marks in the same cell, matching the plain-text
+    // document view while preserving the complete overstrike count separately.
+    rows.get(line).set(column, mark.character);
+  });
+
+  for (const [, cells] of [...rows.entries()].sort(([a], [b]) => a - b)) {
+    const columns = [...cells.keys()].sort((a, b) => a - b);
+    if (!columns.length) continue;
+    let text = '';
+    let cursor = columns[0];
+    for (const column of columns) {
+      const gap = Math.max(0, Math.min(maxLength, column - cursor));
+      text += ' '.repeat(gap);
+      text += cells.get(column);
+      cursor = column + 1;
+      if ([...text].length > maxLength) break;
+    }
+    const preview = truncatePreview(text.trim(), maxLength);
+    if (preview) return preview;
+  }
+  return '';
+}
+
+/**
+ * Produce a compact, deterministic first-line preview from persisted paper
+ * content without requiring a live TypewriterDocument instance.
+ */
+export function extractPaperFirstNonblankLine(content, options = {}) {
+  const maxLength = options.maxLength ?? 80;
+  if (!Number.isSafeInteger(maxLength) || maxLength < 1 || maxLength > 500) {
+    throw new PaperLifecycleError('invalid-preview-length', 'Paper preview length must be an integer from 1 to 500');
+  }
+  if (typeof content === 'string') return firstNonblankTextLine(content, maxLength);
+  if (!content || typeof content !== 'object') return '';
+  for (const candidate of [content.plainText, content.text]) {
+    if (typeof candidate === 'string') {
+      const preview = firstNonblankTextLine(candidate, maxLength);
+      if (preview) return preview;
+    }
+  }
+  if (Array.isArray(content.lines)) {
+    const preview = firstNonblankTextLine(content.lines.join('\n'), maxLength);
+    if (preview) return preview;
+  }
+  return Array.isArray(content.marks)
+    ? firstNonblankMarkLine(content.marks, maxLength)
+    : '';
+}
+
+function createSheetRecords(state) {
+  const records = [];
+  if (state.insertedSheet) {
+    records.push({
+      location: 'loaded',
+      page: state.insertedSheet,
+      stateChangedAt: state.insertedSheet.updatedAt,
+      details: {},
+    });
+  }
+  if (state.looseSheet) {
+    records.push({
+      location: 'loose',
+      page: state.looseSheet.page,
+      stateChangedAt: state.looseSheet.extractedAt,
+      details: {
+        extractedAt: state.looseSheet.extractedAt,
+        source: state.looseSheet.source,
+      },
+    });
+  }
+  state.manuscript.forEach((entry) => records.push({
+    location: 'filed',
+    page: entry.page,
+    stateChangedAt: entry.filedAt,
+    details: {
+      filedAt: entry.filedAt,
+      metadata: entry.metadata,
+    },
+  }));
+  state.discards.forEach((entry) => records.push({
+    location: 'discarded',
+    page: entry.page,
+    stateChangedAt: entry.discardedAt,
+    details: {
+      discardedAt: entry.discardedAt,
+      crumple: entry.crumple,
+    },
+  }));
+  return records;
+}
+
+function normalizeSheetLocations(locations = PAPER_SHEET_LOCATIONS) {
+  const candidates = typeof locations === 'string' ? [locations] : locations;
+  if (!Array.isArray(candidates) || candidates.some((location) => !PAPER_SHEET_LOCATIONS.includes(location))) {
+    throw new PaperLifecycleError(
+      'invalid-sheet-location',
+      `Paper locations must be selected from: ${PAPER_SHEET_LOCATIONS.join(', ')}`,
+    );
+  }
+  return new Set(candidates);
+}
+
+function summarizeSheetRecord(record, maxPreviewLength = 80) {
+  const pageMetadata = cloneJson(record.page.metadata ?? {});
+  const filingMetadata = record.location === 'filed' ? cloneJson(record.details.metadata ?? {}) : {};
+  const markCount = Array.isArray(record.page.content?.marks) ? record.page.content.marks.length : 0;
+  const firstNonblankLine = extractPaperFirstNonblankLine(record.page.content, {
+    maxLength: maxPreviewLength,
+  });
+  return {
+    id: record.page.id,
+    sheetNumber: record.page.sheetNumber,
+    location: record.location,
+    createdAt: record.page.createdAt,
+    updatedAt: record.page.updatedAt,
+    stateChangedAt: record.stateChangedAt,
+    firstNonblankLine,
+    markCount,
+    isBlank: !firstNonblankLine && markCount === 0,
+    metadata: { ...pageMetadata, ...filingMetadata },
+  };
+}
+
+/**
+ * Enumerate every physical sheet without copying its potentially large mark
+ * archive. Results are immutable and globally ordered by sheet number unless a
+ * chronological order is explicitly requested.
+ */
+export function enumeratePaperSheets(rawState, options = {}) {
+  const state = validatePaperLifecycleStateReference(rawState);
+  const locations = normalizeSheetLocations(options.locations);
+  const order = options.order ?? 'sheet-number';
+  if (!['sheet-number', 'newest', 'oldest', 'physical'].includes(order)) {
+    throw new PaperLifecycleError('invalid-sheet-order', 'Paper sheet order is invalid');
+  }
+  const maxPreviewLength = options.maxPreviewLength ?? 80;
+  let records = createSheetRecords(state).filter((record) => locations.has(record.location));
+  if (order === 'sheet-number') {
+    records = records.sort((a, b) => a.page.sheetNumber - b.page.sheetNumber || a.page.id.localeCompare(b.page.id));
+  } else if (order === 'newest') {
+    records = records.sort((a, b) => b.stateChangedAt - a.stateChangedAt || b.page.sheetNumber - a.page.sheetNumber);
+  } else if (order === 'oldest') {
+    records = records.sort((a, b) => a.stateChangedAt - b.stateChangedAt || a.page.sheetNumber - b.page.sheetNumber);
+  }
+  return deepFreezeJson(records.map((record) => summarizeSheetRecord(record, maxPreviewLength)));
+}
+
+function requireSheetRecord(state, pageId) {
+  if (typeof pageId !== 'string' || !pageId) {
+    throw new PaperLifecycleError('invalid-page-id', 'Paper selection requires a non-empty page id');
+  }
+  const record = createSheetRecords(state).find((candidate) => candidate.page.id === pageId);
+  if (!record) {
+    throw new PaperLifecycleError('page-not-found', `Sheet ${pageId} was not found`);
+  }
+  return record;
+}
+
+/**
+ * Select one sheet by identity for viewing or export. Selection is read-only:
+ * it does not move the sheet between the platen, desk, manuscript, or basket.
+ */
+export function selectPaperSheet(rawState, pageId, options = {}) {
+  const state = validatePaperLifecycleStateReference(rawState);
+  const record = requireSheetRecord(state, pageId);
+  return deepFreezeJson({
+    location: record.location,
+    summary: summarizeSheetRecord(record, options.maxPreviewLength ?? 80),
+    page: cloneJson(record.page),
+    placement: cloneJson(record.details),
+  });
 }
 
 function freezeLifecycleState(state) {
@@ -918,6 +1142,26 @@ export class PaperLifecycle {
 
   getOverview() {
     return this.overview;
+  }
+
+  /**
+   * Return lightweight summaries for the paper-desk UI. This deliberately does
+   * not expose or duplicate the full impression archive for every sheet.
+   */
+  listSheets(options = {}) {
+    return enumeratePaperSheets(this.state, options);
+  }
+
+  getSheetSummary(pageId, options = {}) {
+    const record = requireSheetRecord(this.state, pageId);
+    return deepFreezeJson(summarizeSheetRecord(record, options.maxPreviewLength ?? 80));
+  }
+
+  /**
+   * Select a specific sheet for preview/export without moving it physically.
+   */
+  selectSheet(pageId, options = {}) {
+    return selectPaperSheet(this.state, pageId, options);
   }
 
   commit(mutator) {
