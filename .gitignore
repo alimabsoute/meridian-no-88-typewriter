@@ -1,6 +1,10 @@
 node_modules/
 dist/
 visual-checks/
+.vercel/
 *.log
 .DS_Store
 Thumbs.db
+design-review/*.png
+coming-soon/community/community-preview-*.png
+coming-soon/writing-board/writing-board-*.png
