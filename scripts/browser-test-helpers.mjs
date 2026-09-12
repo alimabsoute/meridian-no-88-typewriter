@@ -140,7 +140,7 @@ function isManagedLocalPreview(url) {
     && port === PREVIEW_PORT;
 }
 
-async function probeHtml(targetUrl, timeoutMs = 1_500) {
+async function probeHtml(targetUrl, timeoutMs = 5_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

@@ -158,7 +158,7 @@
         <div class="archive-warning" id="archive-warning" role="alert" hidden></div>
         <div class="tray-content" id="document-content" aria-hidden="true" inert>
           <div class="transcript-wrap">
-            <span class="field-label">TYPECRIPT</span>
+            <span class="field-label">TYPESCRIPT</span>
             <pre id="transcript" aria-label="Typed document preview">The page is waiting.</pre>
           </div>
           <div class="tray-actions">
@@ -183,7 +183,7 @@
           </div>
           <section class="paper-desk" aria-labelledby="paper-desk-title">
             <div class="paper-desk-heading">
-              <div><span class="field-label">PAPER DESK</span><h3 id="paper-desk-title">Loaded, loose, filed, and discarded sheets</h3></div>
+              <div><span class="field-label">PAPER DESK</span><h3 id="paper-desk-title">Your sheets</h3></div>
               <span id="paper-desk-count">01 SHEET</span>
             </div>
             <div class="paper-desk-list" id="paper-desk-list" aria-label="Saved and physical sheets"></div>
@@ -219,7 +219,7 @@
           <li data-coach-action="shift"><b>02</b><span>Hold Shift for a capital. The entire basket moves.</span></li>
           <li data-coach-action="return"><b>03</b><span>Press Enter to return the carriage and feed one line.</span></li>
           <li data-coach-action="bell"><b>04</b><span>The bell sounds five spaces before the right margin.</span></li>
-          <li data-coach-action="release"><b>05</b><span>Open Document and release the sheet when the page is ready.</span></li>
+          <li data-coach-action="release"><b>05</b><span>Open Paper and release the sheet when the page is ready.</span></li>
         </ol>
         <div class="coach-actions">
           <button id="coach-next" type="button">NEXT</button>
@@ -227,6 +227,14 @@
         </div>
       </aside>
 
+      <nav class="workbench-toolbar ui-layer" aria-label="Writing workbench">
+        <button type="button" data-workbench="paper" aria-expanded="false">Paper</button>
+        <button type="button" data-workbench="machine" aria-expanded="false">Machine</button>
+        <button type="button" data-workbench="room" aria-expanded="false">Room</button>
+        <button type="button" data-workbench="view" aria-expanded="false">View</button>
+        <button type="button" data-workbench="ink" aria-expanded="false">Ink</button>
+        <button type="button" data-workbench="export" aria-expanded="false">Export</button>
+      </nav>
       <footer class="key-legend ui-layer">
         <div><kbd>TYPE</kbd><span>STRIKE KEYS</span></div>
         <div><kbd>↵</kbd><span>RETURN + FEED</span></div>

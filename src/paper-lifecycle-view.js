@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { flexPaperGeometry, paperPerimeterIndices } from './paper-flex.js';
+import { makePaperFiberTexture } from './textures.js';
 
 const EPSILON = 1e-6;
 
@@ -48,9 +50,12 @@ export function computeCrumpledPoint({
 
   const nx = x / Math.max(width * 0.5, EPSILON);
   const ny = y / Math.max(height * 0.5, EPSILON);
-  const noiseA = deterministicUnit(seed, index, 0) * 2 - 1;
-  const noiseB = deterministicUnit(seed, index, 1) * 2 - 1;
-  const noiseC = deterministicUnit(seed, index, 2) * 2 - 1;
+  const phaseA = deterministicUnit(seed, 0, 0) * Math.PI * 2;
+  const phaseB = deterministicUnit(seed, 0, 1) * Math.PI * 2;
+  // Spatially coherent folds avoid the spiky per-vertex noise of a shattered mesh.
+  const noiseA = Math.sin(nx * 3.2 + ny * 1.4 + phaseA);
+  const noiseB = Math.cos(ny * 3.8 - nx * 1.1 + phaseB);
+  const noiseC = Math.sin(nx * 5.1 - ny * 4.4 + phaseA + phaseB);
   const buckle = clamp01(amount / 0.34);
   const folding = clamp01((amount - 0.16) / 0.54);
   const compression = easeInOutCubic(clamp01((amount - 0.52) / 0.48));
@@ -73,7 +78,7 @@ export function computeCrumpledPoint({
 
   const azimuth = (nx * 1.7 + noiseA * 0.48) * Math.PI;
   const polar = clamp01((ny + 1) * 0.5 + noiseB * 0.09) * Math.PI;
-  const radius = minimumDimension * (0.075 + deterministicUnit(seed, index, 3) * 0.038);
+  const radius = minimumDimension * (0.075 + (0.5 + 0.5 * Math.sin(nx * 6.2 + ny * 4.1 + phaseB)) * 0.038);
   const wadX = Math.cos(azimuth) * Math.sin(polar) * radius;
   const wadY = Math.cos(polar) * radius * 0.92;
   const wadZ = Math.sin(azimuth) * Math.sin(polar) * radius + noiseC * radius * 0.32;
@@ -170,6 +175,7 @@ function disposeObject(object) {
     const materials = Array.isArray(child.material) ? child.material : child.material ? [child.material] : [];
     for (const material of materials) {
       if (material.userData?.ownsMap) material.map?.dispose?.();
+      if (material.userData?.ownsBumpMap) material.bumpMap?.dispose?.();
       material.dispose?.();
     }
   });
@@ -227,6 +233,7 @@ export class PaperLifecycleView {
     }
 
     this.parent = options.parent;
+    this.reducedMotion = options.reducedMotion ?? globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     this.root = new THREE.Group();
     this.root.name = 'PaperLifecycleView';
     this.parent.add(this.root);
@@ -388,19 +395,64 @@ export class PaperLifecycleView {
       map: ownedTexture,
       emissive: 0xffffff,
       emissiveMap: ownedTexture,
-      emissiveIntensity: 0.24,
+      emissiveIntensity: 0.09,
+      bumpMap: makePaperFiberTexture(),
+      bumpScale: 0.009,
       roughness: 0.93,
       metalness: 0,
       side: THREE.DoubleSide,
       transparent: true,
     });
     material.userData.ownsMap = Boolean(ownedTexture);
+    material.userData.ownsBumpMap = true;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = 'LifecyclePaper';
+    // A narrow perimeter ribbon follows the deformed sheet, giving the edge
+    // physical thickness without duplicating its document texture.
+    const perimeter = paperPerimeterIndices(this.segmentsX, this.segmentsY);
+    const edgeGeometry = new THREE.BufferGeometry();
+    const edgePositions = new THREE.Float32BufferAttribute(perimeter.length * 6, 3);
+    edgeGeometry.setAttribute('position', edgePositions);
+    const indices = [];
+    for (let i = 0; i < perimeter.length; i += 1) {
+      const a = i * 2;
+      const b = ((i + 1) % perimeter.length) * 2;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+    edgeGeometry.setIndex(indices);
+    const edge = new THREE.Mesh(edgeGeometry, new THREE.MeshStandardMaterial({
+      color: 0xd8ccb3, roughness: 0.98, side: THREE.DoubleSide, transparent: true,
+    }));
+    edge.name = 'PaperThinEdge';
+    edge.frustumCulled = false;
+    let edgeVersion = -1;
+    edge.onBeforeRender = () => {
+      edge.material.opacity = material.opacity;
+      const position = geometry.attributes.position;
+      if (edgeVersion === position.version) return;
+      edgeVersion = position.version;
+      const normal = geometry.attributes.normal;
+      perimeter.forEach((vertex, index) => {
+        for (let side = 0; side < 2; side += 1) {
+          const thickness = side === 0 ? 0.0025 : -0.0025;
+          edgePositions.setXYZ(index * 2 + side,
+            position.getX(vertex) + normal.getX(vertex) * thickness,
+            position.getY(vertex) + normal.getY(vertex) * thickness,
+            position.getZ(vertex) + normal.getZ(vertex) * thickness);
+        }
+      });
+      edgePositions.needsUpdate = true;
+      edgeGeometry.computeVertexNormals();
+    };
+    mesh.add(edge);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.flatPositions = flatPositions;
     mesh.userData.sourcePositions = sourcePositions;
+    const relaxedGeometry = geometry.clone();
+    flexPaperGeometry(relaxedGeometry, flatPositions, this.paperWidth, this.paperHeight);
+    mesh.userData.relaxedPositions = relaxedGeometry.attributes.position.array.slice();
+    relaxedGeometry.dispose();
     return mesh;
   }
 
@@ -423,7 +475,7 @@ export class PaperLifecycleView {
     return new Promise((resolve, reject) => {
       this.motion = {
         kind,
-        duration: Math.max(0.01, duration),
+        duration: this.reducedMotion ? 0.01 : Math.max(0.01, duration),
         elapsed: 0,
         onUpdate,
         onComplete,
@@ -457,13 +509,15 @@ export class PaperLifecycleView {
     const startQuaternion = mesh.quaternion.clone();
     const startScale = mesh.scale.clone();
     const sourcePositions = mesh.userData.sourcePositions;
-    const flatPositions = mesh.userData.flatPositions;
+    const flatPositions = mesh.userData.relaxedPositions;
+    const handlingPositions = new Float32Array(flatPositions.length);
     return this.beginMotion('extract', options.duration ?? 0.72, (linear) => {
       const eased = easeInOutCubic(linear);
       mesh.position.lerpVectors(startPosition, this.inspectionPosition, eased);
       mesh.quaternion.slerpQuaternions(startQuaternion, this.inspectionQuaternion, eased);
       mesh.scale.lerpVectors(startScale, this.inspectionScale, eased);
-      interpolatePositions(mesh.geometry, sourcePositions, flatPositions, eased);
+      for (let i = 0; i < handlingPositions.length; i += 1) handlingPositions[i] = THREE.MathUtils.lerp(sourcePositions[i], flatPositions[i], eased);
+      flexPaperGeometry(mesh.geometry, handlingPositions, this.paperWidth, this.paperHeight, { curl: 0, impulse: 0.5, progress: linear, reducedMotion: this.reducedMotion });
     }, () => {
       this.phase = 'inspecting';
       this.emit('inspection-ready', { pageId: options.pageId });
@@ -493,7 +547,7 @@ export class PaperLifecycleView {
       active.crumpleProgress = progress;
       applyPositions(
         active.mesh.geometry,
-        active.mesh.userData.flatPositions,
+        active.mesh.userData.relaxedPositions,
         progress,
         seed,
         this.paperWidth,
@@ -634,6 +688,7 @@ export class PaperLifecycleView {
     }
     const finalCount = options.totalCount ?? this.manuscriptCount + 1;
     const target = this.manuscriptTopPose(finalCount);
+    const filingPositions = active.mesh.geometry.attributes.position.array.slice();
     const startPosition = active.mesh.position.clone();
     const startQuaternion = active.mesh.quaternion.clone();
     const startScale = active.mesh.scale.clone();
@@ -641,7 +696,7 @@ export class PaperLifecycleView {
     this.emit('file-start', { pageId: active.pageId, totalCount: finalCount });
 
     return this.beginMotion('file', options.duration ?? 0.72, (linear) => {
-      const eased = easeInOutCubic(linear);
+      const eased = easeInOutCubic(clamp01(linear / 0.87));
       const point = sampleThrowArc(startPosition, target.position, eased, {
         seed: options.seed ?? active.pageId.length,
         height: options.arcHeight ?? 0.38,
@@ -650,6 +705,10 @@ export class PaperLifecycleView {
       active.mesh.position.set(point.x, point.y, point.z);
       active.mesh.quaternion.slerpQuaternions(startQuaternion, target.quaternion, eased);
       active.mesh.scale.lerpVectors(startScale, target.scale, eased);
+      const settle = clamp01((linear - 0.78) / 0.22);
+      interpolatePositions(active.mesh.geometry, filingPositions, active.mesh.userData.flatPositions, eased);
+      const base = active.mesh.geometry.attributes.position.array.slice();
+      flexPaperGeometry(active.mesh.geometry, base, this.paperWidth, this.paperHeight, { curl: 0, impulse: 0.65 * (1 - settle), progress: linear, reducedMotion: this.reducedMotion });
     }, () => {
       this.updateStackLayers(finalCount);
       this.replaceManuscriptTop(active.mesh, active.pageId);
@@ -701,7 +760,7 @@ export class PaperLifecycleView {
       mesh.scale.lerpVectors(startScale, this.inspectionScale, eased);
       applyPositions(
         mesh.geometry,
-        mesh.userData.flatPositions,
+        mesh.userData.relaxedPositions,
         1 - eased,
         seed,
         this.paperWidth,
@@ -840,6 +899,7 @@ export class PaperLifecycleView {
       mesh.position.lerpVectors(startPosition, this.freshFeedPosition, eased);
       mesh.quaternion.slerpQuaternions(startQuaternion, this.freshFeedQuaternion, eased);
       mesh.scale.lerpVectors(startScale, endScale, eased);
+      flexPaperGeometry(mesh.geometry, mesh.userData.flatPositions, this.paperWidth, this.paperHeight, { curl: Math.sin(linear * Math.PI) * 0.7, impulse: 0.55, progress: linear, reducedMotion: this.reducedMotion });
       if (!attached && linear >= attachAt) {
         attached = true;
         this.emit('fresh-sheet-attach', { pageId: options.pageId });
@@ -968,6 +1028,7 @@ export class PaperLifecycleView {
       mesh.scale.copy(this.inspectionScale);
       setTarget(mesh, { kind: 'loose-page', action: 'inspect-page', pageId: page.id });
       this.root.add(mesh);
+      flexPaperGeometry(mesh.geometry, mesh.userData.flatPositions, this.paperWidth, this.paperHeight);
       this.activePage = { pageId: page.id, mesh, crumpleProgress: 0, seed: null };
       this.phase = 'inspecting';
     }

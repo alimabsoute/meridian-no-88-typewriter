@@ -16,12 +16,13 @@
     "test:performance": "node scripts/performance-check.mjs",
     "test:visual": "node scripts/visual-check.mjs",
     "test:release-ui": "node scripts/release-ui-check.mjs",
+    "test:workbench": "node scripts/workbench-check.mjs",
     "test:community-preview": "node scripts/community-coming-soon-check.mjs",
     "test:writing-board-preview": "node coming-soon/writing-board/smoke.mjs",
     "test:package": "node scripts/release-package-check.mjs",
     "package:release": "node scripts/package-release.mjs",
     "build:release": "npm run build && npm run package:release && npm run test:package",
-    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:release-ui && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
+    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:release-ui && npm run test:workbench && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.2.6",

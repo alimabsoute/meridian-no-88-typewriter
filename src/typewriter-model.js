@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { makeSurfaceGrain } from './material-craft.js';
+import { stepPaperResponse } from './paper-response.js';
+import { paperPerimeterIndices } from './paper-flex.js';
 import {
   makeBadgeTexture,
   makeCrinkleTexture,
@@ -8,6 +11,7 @@ import {
   makeRectLabelTexture,
   makeScaleTexture,
   makeWoodTexture,
+  makePaperFiberTexture,
 } from './textures.js';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -366,10 +370,13 @@ function updateBichromeRibbon(mesh, points) {
 }
 
 export class TypewriterModel {
-  constructor({ scene, documentState, paperRenderer, audio, onChange, onStatus }) {
+  constructor({ scene, documentState, paperRenderer, audio, onChange, onStatus, reducedMotion = false }) {
     this.scene = scene;
     this.document = documentState;
     this.paperRenderer = paperRenderer;
+    this.reducedMotion = reducedMotion;
+    this.surfaceTime = 0;
+    this.paperResponse = { position: 0, velocity: 0 };
     this.audio = audio;
     this.onChange = onChange ?? (() => {});
     this.onStatus = onStatus ?? (() => {});
@@ -443,30 +450,32 @@ export class TypewriterModel {
 
   makeMaterials() {
     const crinkle = makeCrinkleTexture();
+    const brushed = makeSurfaceGrain('metal');
+    const fabric = makeSurfaceGrain('ribbon');
     this.materials = {
       enamel: new THREE.MeshPhysicalMaterial({
         color: 0x090d0c,
-        roughness: 0.29,
-        metalness: 0.56,
-        clearcoat: 0.34,
-        clearcoatRoughness: 0.26,
+        roughness: 0.3,
+        metalness: 0.38,
+        clearcoat: 0.65,
+        clearcoatRoughness: 0.19,
         bumpMap: crinkle,
-        bumpScale: 0.014,
+        bumpScale: 0.006,
       }),
       enamelEdge: new THREE.MeshStandardMaterial({ color: 0x171b18, roughness: 0.34, metalness: 0.7 }),
-      steel: new THREE.MeshStandardMaterial({ color: 0x66706d, roughness: 0.24, metalness: 0.92 }),
+      steel: new THREE.MeshStandardMaterial({ color: 0x88918e, roughness: 0.42, roughnessMap: brushed, bumpMap: brushed, bumpScale: 0.0012, metalness: 0.92 }),
       darkSteel: new THREE.MeshStandardMaterial({ color: 0x252b29, roughness: 0.32, metalness: 0.9 }),
-      chrome: new THREE.MeshPhysicalMaterial({ color: 0xbfc8c4, roughness: 0.14, metalness: 1, clearcoat: 0.25 }),
-      brass: new THREE.MeshStandardMaterial({ color: 0xa77a39, roughness: 0.25, metalness: 0.88 }),
-      agedBrass: new THREE.MeshStandardMaterial({ color: 0x74542e, roughness: 0.4, metalness: 0.75 }),
+      chrome: new THREE.MeshPhysicalMaterial({ color: 0xc9d1ce, roughness: 0.22, roughnessMap: brushed, metalness: 1, clearcoat: 0.28 }),
+      brass: new THREE.MeshStandardMaterial({ color: 0xb28a4f, roughness: 0.35, roughnessMap: brushed, metalness: 0.88 }),
+      agedBrass: new THREE.MeshStandardMaterial({ color: 0x85633b, roughness: 0.51, bumpMap: crinkle, bumpScale: 0.003, metalness: 0.75 }),
       rubber: new THREE.MeshStandardMaterial({ color: 0x101211, roughness: 0.83, metalness: 0.02 }),
       felt: new THREE.MeshStandardMaterial({ color: 0x261c16, roughness: 1 }),
       ivory: new THREE.MeshPhysicalMaterial({ color: 0xded3b8, roughness: 0.25, clearcoat: 0.55, clearcoatRoughness: 0.18 }),
       glass: new THREE.MeshPhysicalMaterial({ color: 0xdde1d5, roughness: 0.08, transmission: 0.16, thickness: 0.06, clearcoat: 1 }),
-      paper: new THREE.MeshStandardMaterial({ map: this.paperRenderer.texture, roughness: 0.92, metalness: 0, side: THREE.DoubleSide }),
+      paper: new THREE.MeshStandardMaterial({ map: this.paperRenderer.texture, bumpMap: makePaperFiberTexture(), bumpScale: 0.008, roughness: 0.92, metalness: 0, side: THREE.DoubleSide }),
       paperEdge: new THREE.MeshStandardMaterial({ color: 0xd8ccb3, roughness: 0.96, side: THREE.DoubleSide }),
-      ribbonBlack: new THREE.MeshStandardMaterial({ color: 0x141715, roughness: 0.78, metalness: 0.06, side: THREE.DoubleSide }),
-      ribbonRed: new THREE.MeshStandardMaterial({ color: 0x782019, roughness: 0.77, metalness: 0.04, side: THREE.DoubleSide }),
+      ribbonBlack: new THREE.MeshStandardMaterial({ color: 0x141715, bumpMap: fabric, bumpScale: 0.002, roughness: 0.88, metalness: 0.02, side: THREE.DoubleSide }),
+      ribbonRed: new THREE.MeshStandardMaterial({ color: 0x782019, bumpMap: fabric, bumpScale: 0.002, roughness: 0.87, metalness: 0.02, side: THREE.DoubleSide }),
       wood: new THREE.MeshStandardMaterial({ map: makeWoodTexture(), color: 0x8a5a38, roughness: 0.5, metalness: 0 }),
       leather: new THREE.MeshStandardMaterial({ color: 0x211812, roughness: 0.73, metalness: 0.02 }),
       wall: new THREE.MeshStandardMaterial({ color: 0x161a16, roughness: 1, metalness: 0 }),
@@ -889,6 +898,12 @@ export class TypewriterModel {
     this.paperMesh.name = 'TypedPaper';
     this.paperMesh.position.set(0, 0, 0);
     this.carriage.add(this.paperMesh);
+    this.paperEdgeIndices = paperPerimeterIndices(34, 94);
+    const paperEdgeGeometry = new THREE.BufferGeometry();
+    paperEdgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(this.paperEdgeIndices.length * 3), 3));
+    this.paperOutline = new THREE.LineLoop(paperEdgeGeometry, new THREE.LineBasicMaterial({ color: 0xbaab8a, transparent: true, opacity: 0.38 }));
+    this.paperOutline.name = 'FinePaperEdge';
+    this.paperMesh.add(this.paperOutline);
     this.lastDeformedPaperY = Number.POSITIVE_INFINITY;
 
     const bail = new THREE.Group();
@@ -1110,9 +1125,12 @@ export class TypewriterModel {
     this.roundKeyGeometry = {
       stem: new THREE.CylinderGeometry(0.055, 0.06, 0.35, 12),
       ring: new THREE.TorusGeometry(0.237, 0.028, 10, 32),
-      cap: new THREE.CylinderGeometry(0.215, 0.225, 0.072, 32),
+      cap: new THREE.CylinderGeometry(0.215, 0.225, 0.052, 32),
       label: new THREE.CircleGeometry(0.198, 32),
     };
+    // The inset is gently dished beneath its rolled metal rim.
+    this.roundKeyGeometry.label.attributes.position.setZ(0, -0.008);
+    this.roundKeyGeometry.label.computeVertexNormals();
 
     CHARACTER_KEYS.forEach((row, rowIndex) => {
       row.forEach(([code, lower, upper], keyIndex) => {
@@ -1146,7 +1164,7 @@ export class TypewriterModel {
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.045;
     group.add(ring);
-    const labelMaterial = new THREE.MeshPhysicalMaterial({ map: makeKeyLabelTexture(primary, secondary), roughness: 0.2, clearcoat: 0.9, clearcoatRoughness: 0.1 });
+    const labelMaterial = new THREE.MeshPhysicalMaterial({ map: makeKeyLabelTexture(primary, secondary), roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.3 });
     const cap = new THREE.Mesh(this.roundKeyGeometry.cap, this.materials.agedBrass);
     cap.position.y = 0.025;
     group.add(cap);
@@ -1592,7 +1610,10 @@ export class TypewriterModel {
 
   deformPaper(force = false) {
     if (!this.paperMesh || !this.paperRestPositions) return;
-    if (!force && Math.abs(this.paperY - this.lastDeformedPaperY) < 0.00015) return;
+    const flex = this.paperResponse?.position ?? 0;
+    if (!force && Math.abs(this.paperY - this.lastDeformedPaperY) < 0.00015
+      && Math.abs(flex - (this.lastPaperFlex ?? 0)) < 0.00005) return;
+    this.lastPaperFlex = flex;
     this.lastDeformedPaperY = this.paperY;
     const geometry = this.paperMesh.geometry;
     const positions = geometry.attributes.position;
@@ -1617,6 +1638,8 @@ export class TypewriterModel {
       if (pathDistance >= 0) {
         y = printLineY + pathDistance;
         z = platenCenterZ + platenRadius - pathDistance * 0.028 + edgeCurl;
+        const free = Math.min(1, Math.max(0, (pathDistance - 0.35) / 1.3));
+        z += free * free * (0.045 * edge ** 3 + flex * (0.7 + Math.sin(x * 1.4) * 0.3));
       } else if (pathDistance >= -wrapLength) {
         const angle = pathDistance / platenRadius;
         y = printLineY + Math.sin(angle) * platenRadius;
@@ -1628,6 +1651,14 @@ export class TypewriterModel {
       positions.setXYZ(i, x, y, z);
     }
     positions.needsUpdate = true;
+    if (this.paperOutline) {
+      const edgePositions = this.paperOutline.geometry.attributes.position;
+      this.paperEdgeIndices.forEach((source, index) => {
+        edgePositions.setXYZ(index, positions.getX(source), positions.getY(source), positions.getZ(source) + 0.001);
+      });
+      edgePositions.needsUpdate = true;
+      this.paperOutline.geometry.computeBoundingSphere();
+    }
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
   }
@@ -1833,6 +1864,7 @@ export class TypewriterModel {
     const finiteDelta = Number.isFinite(delta) ? delta : 0;
     const dt = Math.max(0, Math.min(0.04, finiteDelta));
     this.lastDelta = dt;
+    this.surfaceTime = (this.surfaceTime ?? 0) + dt;
     if (this.marginReleaseTimer > 0) {
       this.marginReleaseTimer -= dt;
       if (this.marginReleaseTimer <= 0) this.marginReleased = false;
@@ -2011,10 +2043,11 @@ export class TypewriterModel {
     const ribbonLift = this.inkMode === 'stencil' ? 0 : this.universalAmount * (this.inkMode === 'red' ? 0.35 : 0.24);
     this.vibrator.position.y = 2.23 + ribbonLift;
     this.universalBar.position.y = 0.82 - this.universalAmount * 0.075;
-    this.ribbonPath[1].y = 1.72 + ribbonLift * 0.16;
+    const flutter = this.reducedMotion ? 0 : Math.sin((this.surfaceTime ?? 0) * 46) * this.universalAmount * 0.007;
+    this.ribbonPath[1].y = 1.72 + ribbonLift * 0.16 + flutter;
     this.ribbonPath[2].y = 2.23 + ribbonLift;
     this.ribbonPath[3].y = 2.23 + ribbonLift;
-    this.ribbonPath[4].y = 1.72 + ribbonLift * 0.16;
+    this.ribbonPath[4].y = 1.72 + ribbonLift * 0.16 - flutter;
     updateBichromeRibbon(this.ribbonStrip, this.ribbonPath);
 
     const shellOpacity = THREE.MathUtils.lerp(1, 0.12, this.inspectionAmount);
@@ -2036,6 +2069,15 @@ export class TypewriterModel {
       this.carriagePosition = damp(this.carriagePosition, this.carriageTarget, 31, dt);
     }
     this.carriage.position.x = this.carriagePosition;
+    this.paperResponse = stepPaperResponse(this.paperResponse ?? {}, {
+      delta: dt,
+      carriageDelta: this.carriagePosition - (this.previousSurfaceCarriage ?? this.carriagePosition),
+      feedDelta: this.paperY - (this.previousSurfaceFeed ?? this.paperY),
+      impact: this.machineImpulse,
+      reducedMotion: this.reducedMotion,
+    });
+    this.previousSurfaceCarriage = this.carriagePosition;
+    this.previousSurfaceFeed = this.paperY;
     this.drawbandEnd.x = this.carriagePosition - 3.6;
     placeCylinder(this.drawband, this.drawbandStart, this.drawbandEnd);
     this.drawbandDrum.rotation.z = (this.dimensions.startCarriageX - this.carriagePosition) * 1.55;
@@ -2073,7 +2115,7 @@ export class TypewriterModel {
     this.bellHammer.rotation.z = Math.sin(this.bellAmount * Math.PI * 5) * this.bellAmount * 0.58;
 
     this.machineImpulse = damp(this.machineImpulse, 0, 20, dt);
-    this.machine.position.y = Math.sin(performance.now() * 0.045) * this.machineImpulse;
+    this.machine.position.y = this.reducedMotion ? 0 : Math.sin((this.surfaceTime ?? 0) * 45) * this.machineImpulse;
   }
 
   commandFromPointer(keyRecord) {

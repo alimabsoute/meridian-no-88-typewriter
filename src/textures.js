@@ -216,6 +216,30 @@ export function makeCrinkleTexture() {
   return texture;
 }
 
+/** Small linear bump map. No canvas/document dependency, including in tests. */
+export function makePaperFiberTexture() {
+  const size = 128;
+  const data = new Uint8Array(size * size * 4);
+  const random = seededRandom(41987);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const offset = (y * size + x) * 4;
+      const fiber = Math.sin(y * 1.7 + Math.sin(x * 0.17) * 0.8) * 7;
+      const value = Math.round(128 + fiber + (random() - 0.5) * 24);
+      data[offset] = value;
+      data[offset + 1] = value;
+      data[offset + 2] = value;
+      data[offset + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(9, 12);
+  texture.magFilter = texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export class PaperRenderer {
   constructor(documentState) {
     this.width = PAPER_EXPORT_BASE_WIDTH;
@@ -315,7 +339,7 @@ export class PaperRenderer {
     context.fillRect(0, 0, width, height);
 
     const random = seededRandom(24681357 + this.document.sheetNumber);
-    const fiberCount = Math.round(7200 * scale * scale);
+    const fiberCount = 7200;
     for (let index = 0; index < fiberCount; index += 1) {
       const alpha = appearance === 'carbon-copy'
         ? 0.01 + random() * 0.018
@@ -405,7 +429,8 @@ export class PaperRenderer {
         context.fillStyle = `rgba(${color.join(',')}, ${0.08 + random() * 0.09})`;
         context.fillText(mark.character, (random() - 0.5) * 1.25 * scale, (random() - 0.5) * 0.85 * scale);
       }
-      context.globalCompositeOperation = 'destination-out';
+      context.globalCompositeOperation = 'source-over';
+      context.fillStyle = '#e9dec5';
       for (let speck = 0; speck < 5; speck += 1) {
         context.globalAlpha = 0.08 + random() * 0.13;
         context.fillRect(
@@ -445,7 +470,8 @@ export class PaperRenderer {
       (0.55 + (random() - 0.5) * 1.8) * scale,
       (0.35 + (random() - 0.5) * 1.2) * scale,
     );
-    context.globalCompositeOperation = 'destination-out';
+    context.globalCompositeOperation = 'source-over';
+    context.fillStyle = '#dfdfd5';
     for (let speck = 0; speck < 7; speck += 1) {
       context.globalAlpha = 0.09 + random() * 0.16;
       context.fillRect(

@@ -94,8 +94,8 @@ try {
     invariant(
       qualityState.quality === 'medium'
         && qualityState.effectiveQuality === 'medium'
-        && qualityState.backdropVisible
-        && !qualityState.environmentVisible
+        && !qualityState.backdropVisible
+        && qualityState.environmentVisible
         && !qualityState.exteriorVisible,
       `Default-quality room mismatch: ${JSON.stringify(qualityState)}`,
     );
@@ -144,8 +144,10 @@ try {
       };
     });
     invariant(
-      sceneCounts.room.visibleDrawables <= 6 && sceneCounts.room.visibleLights === 0,
-      `Default room fallback expanded beyond its draw-resource budget: ${JSON.stringify(sceneCounts.room)}`,
+      // The approved scene replaces a six-draw painted backdrop with a bay,
+      // instanced living trees and a dimensional city. Keep a finite draw budget.
+      sceneCounts.room.visibleDrawables <= 180 && sceneCounts.room.visibleLights <= 3,
+      `Dimensional room expanded beyond its draw-resource budget: ${JSON.stringify(sceneCounts.room)}`,
     );
 
     const updateBenchmark = await page.evaluate(() => {
@@ -227,8 +229,8 @@ try {
       invariant(
         lowQualityState.quality === 'low'
           && lowQualityState.effectiveQuality === 'low'
-          && lowQualityState.backdropVisible
-          && !lowQualityState.environmentVisible
+          && !lowQualityState.backdropVisible
+          && lowQualityState.environmentVisible
           && !lowQualityState.exteriorVisible
           && !lowErrors.length,
         `Low-quality fallback mismatch: ${JSON.stringify({ lowQualityState, lowErrors })}`,

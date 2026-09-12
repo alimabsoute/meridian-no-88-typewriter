@@ -46,16 +46,20 @@ async function waitForSimulator(page, { enter = true } = {}) {
   }
 }
 
+async function openWorkbench(page, name) {
+  const button = page.locator(`[data-workbench="${name}"]`);
+  if (await button.getAttribute('aria-expanded') !== 'true') await button.click();
+  await page.waitForFunction((panel) => document.querySelector('#app')?.dataset.workbenchPanel === panel, name);
+  invariant(await button.getAttribute('aria-expanded') === 'true', `${name} toolbar did not open its panel`);
+}
+
 async function openDocumentTray(page) {
-  const expanded = await page.locator('#document-toggle').getAttribute('aria-expanded');
-  if (expanded !== 'true') await page.click('#document-toggle');
+  await openWorkbench(page, 'paper');
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
 }
 
 async function openEnvironmentPanel(page) {
-  if (!(await page.locator('.environment-card').evaluate((element) => element.open))) {
-    await page.click('.environment-summary');
-  }
+  await openWorkbench(page, 'room');
   await page.waitForFunction(() => document.querySelector('.environment-card')?.open);
 }
 
@@ -277,12 +281,12 @@ try {
         const secondary = document.querySelector('#intro-guide')?.getBoundingClientRect();
         const brand = document.querySelector('.intro-carbon-brand')?.getBoundingClientRect();
         const api = window.__OCTOBERLINE_211__;
-        const crown = api.room.root.getObjectByName('PECOTowerCrownLightsSimplifiedBroadFace');
+        const crown = api.room.livingCity.crownFront;
         const crownCorners = [
-          [-crown.userData.width / 2, -crown.userData.height / 2],
-          [crown.userData.width / 2, -crown.userData.height / 2],
-          [crown.userData.width / 2, crown.userData.height / 2],
-          [-crown.userData.width / 2, crown.userData.height / 2],
+          [-crown.geometry.parameters.width / 2, -crown.geometry.parameters.height / 2],
+          [crown.geometry.parameters.width / 2, -crown.geometry.parameters.height / 2],
+          [crown.geometry.parameters.width / 2, crown.geometry.parameters.height / 2],
+          [-crown.geometry.parameters.width / 2, crown.geometry.parameters.height / 2],
         ].map(([x, y]) => crown.localToWorld(crown.position.clone().set(x, y, 0)).project(api.camera));
         const crownXs = crownCorners.map(({ x }) => (x + 1) * innerWidth * 0.5);
         const crownYs = crownCorners.map(({ y }) => (1 - y) * innerHeight * 0.5);
@@ -374,11 +378,11 @@ try {
       await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
       const state = await page.evaluate(() => {
-        const crown = window.__OCTOBERLINE_211__.room.root.getObjectByName('PECOTowerCrownLightsSimplifiedBroadFace');
+        const crown = window.__OCTOBERLINE_211__.room.livingCity.crownFront;
         let crownBounds = null;
         if (crown) {
-          const width = crown.userData.width;
-          const height = crown.userData.height;
+          const width = crown.geometry.parameters.width;
+          const height = crown.geometry.parameters.height;
           const corners = [
             [-width / 2, -height / 2], [width / 2, -height / 2],
             [width / 2, height / 2], [-width / 2, height / 2],
@@ -424,6 +428,7 @@ try {
     name: 'front-wide',
     filename: '02-front-wide.png',
     run: async (page) => {
+      await openWorkbench(page, 'view');
       await page.click('[data-view="front"]');
       await page.evaluate(() => window.__OCTOBERLINE_211__.setView('front', 0));
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -436,8 +441,9 @@ try {
       }));
       invariant(
         state.activeView === 'front'
-          && Math.abs(state.cameraPosition[0]) < 0.01
-          && state.cameraPosition[2] >= 15
+          && Math.abs(state.cameraPosition[0] - 1.2) < 0.02
+          && Math.abs(state.cameraPosition[1] - 5.7) < 0.02
+          && Math.abs(state.cameraPosition[2] - 16.8) < 0.02
           && state.trayExpanded === 'false'
           && !state.environmentOpen
           && state.weatherSummaryFontSize >= 12,
@@ -462,13 +468,9 @@ try {
       const state = await page.evaluate(() => {
         const room = window.__OCTOBERLINE_211__.room;
         const quality = room.getState().effectiveQuality;
-        const crown = room.root.getObjectByName(
-          quality === 'high'
-            ? 'PECOTowerCrownLightsHighBroadFace'
-            : 'PECOTowerCrownLightsSimplifiedBroadFace',
-        );
-        const width = crown.userData.width;
-        const height = crown.userData.height;
+        const crown = room.livingCity.crownFront;
+        const width = crown.geometry.parameters.width;
+        const height = crown.geometry.parameters.height;
         const corners = [
           [-width / 2, -height / 2], [width / 2, -height / 2],
           [width / 2, height / 2], [-width / 2, height / 2],
@@ -477,6 +479,12 @@ try {
         const ys = corners.map(({ y }) => (1 - y) * innerHeight * 0.5);
         return {
           quality,
+          cityVisible: room.livingCity.root.visible && room.root.visible,
+          dimensionalCity: room.livingCity.root.children.length > 10,
+          mappedCrown: Boolean(crown.material.map && room.livingCity.crownSide.material.map),
+          frontDepth: crown.position.z,
+          trees: room.livingCity.trees.length,
+          leafCount: room.livingCity.leaves.count,
           crown: room.getState().pecoCrown,
           bounds: {
             left: Math.min(...xs),
@@ -490,6 +498,8 @@ try {
       });
       invariant(
         state.tutorialHidden
+          && state.cityVisible && state.dimensionalCity && state.mappedCrown
+          && state.frontDepth < -10 && state.trees >= 3 && state.leafCount >= 100
           && state.crown.frame > 0
           && !state.crown.staticFrame
           && state.bounds.left >= 0
@@ -522,7 +532,9 @@ try {
     name: 'inspection',
     filename: '04-inspection.png',
     run: async (page) => {
+      await openWorkbench(page, 'machine');
       await page.click('#inspection-toggle');
+      await page.keyboard.press('Escape');
       await settleInspection(page);
       await page.evaluate(() => window.__OCTOBERLINE_211__.setView('mechanism', 0));
       await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionAmount > 0.95, null, { timeout: 10000 });
@@ -620,7 +632,7 @@ try {
           && state.paperStatus === 'PAPER PATH EMPTY' && state.loadVisible,
         `Filed-manuscript state mismatch: ${JSON.stringify(state)}`,
       );
-      await page.click('#document-toggle');
+      await page.click('[data-workbench="paper"]');
       await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
       await page.waitForTimeout(450);
       return state;
@@ -647,7 +659,7 @@ try {
           && state.discardCountText === '1' && state.recoverVisible,
         `Discarded-page state mismatch: ${JSON.stringify(state)}`,
       );
-      await page.click('#document-toggle');
+      await page.click('[data-workbench="paper"]');
       await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
       await page.waitForTimeout(450);
       return state;

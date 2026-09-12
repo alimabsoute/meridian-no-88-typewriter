@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createLivingPhiladelphia } from './living-philadelphia.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   AdaptiveQualityGovernor,
@@ -18,10 +19,10 @@ import {
 } from './philadelphia-room-backdrop.js';
 
 const WINDOW = Object.freeze({
-  centerX: 4.4,
-  centerY: 5.25,
-  width: 5.2,
-  height: 6.15,
+  centerX: 2.2,
+  centerY: 4.9,
+  width: 16,
+  height: 8.5,
   wallZ: -6.08,
   frameZ: -5.86,
   skyZ: -8.86,
@@ -357,6 +358,8 @@ export class PhiladelphiaWritingRoom {
     this._buildPerformanceBackdrop();
     this._buildWindowDepthOverlay();
     this._buildLighting();
+    this.livingCity = createLivingPhiladelphia(this);
+    this._bindRealPecoDisplay();
 
     this.effectiveQuality = this.qualityMode === 'auto' ? this._chooseInitialQuality() : this.qualityMode;
     this.qualityGovernor = new AdaptiveQualityGovernor(this.effectiveQuality);
@@ -505,7 +508,9 @@ export class PhiladelphiaWritingRoom {
     this.glassMaterial = this._material(new THREE.MeshPhysicalMaterial({
       color: 0xaebfc9,
       roughness: 0.16,
-      transmission: 0.12,
+      transmission: 0,
+      clearcoat: 0.75,
+      clearcoatRoughness: 0.12,
       transparent: true,
       opacity: 0.15,
       depthWrite: false,
@@ -819,83 +824,40 @@ export class PhiladelphiaWritingRoom {
 
   _buildWindow() {
     const frame = new THREE.Group();
-    frame.name = 'PaintedWoodSashWindow';
-    const halfWidth = WINDOW.width / 2;
-    const halfHeight = WINDOW.height / 2;
-    const rail = 0.27;
-
-    const frameParts = [
-      [WINDOW.centerX - halfWidth, WINDOW.centerY, rail, WINDOW.height + rail],
-      [WINDOW.centerX + halfWidth, WINDOW.centerY, rail, WINDOW.height + rail],
-      [WINDOW.centerX, WINDOW.centerY - halfHeight, WINDOW.width + rail, rail],
-      [WINDOW.centerX, WINDOW.centerY + halfHeight, WINDOW.width + rail, rail],
-    ];
-    for (const [x, y, width, height] of frameParts) {
-      frame.add(this._mesh(
-        new THREE.BoxGeometry(width, height, 0.28),
-        this.windowWoodMaterial,
-        { position: [x, y, WINDOW.frameZ] },
-      ));
+    frame.name = 'PhiladelphiaBayWindow';
+    const bottom = WINDOW.centerY - WINDOW.height / 2;
+    // The large central pane projects outward; side panes turn back to the wall.
+    const panes = [[-4.15, -6.62, 3.472, 0.317], [2.2, -7.16, 9.4, 0], [8.55, -6.62, 3.472, -0.317]];
+    for (const [x, z, width, angle] of panes) {
+      const wing = new THREE.Group(); wing.position.set(x, WINDOW.centerY, z); wing.rotation.y = angle;
+      for (const side of [-1, 1]) {
+        wing.add(this._mesh(new THREE.BoxGeometry(0.15, WINDOW.height, 0.24), this.windowWoodMaterial,
+          { position: [side * width / 2, 0, 0] }));
+        wing.add(this._mesh(new THREE.BoxGeometry(width + 0.15, 0.2, 0.28), this.windowWoodMaterial,
+          { position: [0, side * WINDOW.height / 2, 0] }));
+      }
+      const pane = this._mesh(new THREE.PlaneGeometry(width-0.16, WINDOW.height-0.18), this.glassMaterial);
+      pane.name = 'BayWindowGlass'; wing.add(pane); frame.add(wing);
     }
-
-    const sashParts = [
-      [WINDOW.centerX, WINDOW.centerY, WINDOW.width - 0.18, 0.24],
-      [WINDOW.centerX - WINDOW.width / 6, WINDOW.centerY + WINDOW.height / 4, 0.085, WINDOW.height / 2 - 0.25],
-      [WINDOW.centerX + WINDOW.width / 6, WINDOW.centerY + WINDOW.height / 4, 0.085, WINDOW.height / 2 - 0.25],
-      [WINDOW.centerX - WINDOW.width / 6, WINDOW.centerY - WINDOW.height / 4 + 0.12, 0.085, WINDOW.height / 2 - 0.42],
-      [WINDOW.centerX + WINDOW.width / 6, WINDOW.centerY - WINDOW.height / 4 + 0.12, 0.085, WINDOW.height / 2 - 0.42],
-      [WINDOW.centerX, WINDOW.centerY + WINDOW.height / 4, WINDOW.width - 0.35, 0.07],
-      [WINDOW.centerX, WINDOW.centerY - WINDOW.height / 4 + 0.12, WINDOW.width - 0.35, 0.07],
-    ];
-    for (const [x, y, width, height] of sashParts) {
-      frame.add(this._mesh(
-        new THREE.BoxGeometry(width, height, 0.11),
-        this.windowPaintMaterial,
-        { position: [x, y, WINDOW.frameZ + 0.15] },
-      ));
-    }
-
-    const glass = this._mesh(
-      new THREE.PlaneGeometry(WINDOW.width - 0.34, WINDOW.height - 0.34),
-      this.glassMaterial,
-      { position: [WINDOW.centerX, WINDOW.centerY, WINDOW.frameZ + 0.09] },
-    );
-    glass.name = 'ImperfectWindowGlass';
-    glass.receiveShadow = false;
-    frame.add(glass);
-
-    const sill = this._mesh(
-      new THREE.BoxGeometry(WINDOW.width + 0.62, 0.22, 0.72),
-      this.windowPaintMaterial,
-      { position: [WINDOW.centerX, WINDOW.centerY - halfHeight - 0.11, WINDOW.frameZ + 0.26] },
-    );
-    sill.name = 'DeepWindowSill';
-    frame.add(sill);
-
-    this.sillSnowMaterial = this._material(this.snowMaterial.clone());
-    this.sillSnowMaterial.opacity = 0;
-    const sillSnow = this._mesh(
-      new THREE.BoxGeometry(WINDOW.width - 0.12, 0.055, 0.28),
-      this.sillSnowMaterial,
-      { position: [WINDOW.centerX, WINDOW.centerY - halfHeight + 0.03, WINDOW.frameZ - 0.16] },
-    );
-    sillSnow.name = 'SillSnowAccumulation';
-    frame.add(sillSnow);
-
-    const frostStrips = [
-      [WINDOW.centerX - halfWidth + 0.28, WINDOW.centerY, 0.18, WINDOW.height - 0.42],
-      [WINDOW.centerX + halfWidth - 0.28, WINDOW.centerY, 0.18, WINDOW.height - 0.42],
-      [WINDOW.centerX, WINDOW.centerY + halfHeight - 0.28, WINDOW.width - 0.45, 0.16],
-    ];
-    for (const [x, y, width, height] of frostStrips) {
-      frame.add(this._mesh(
-        new THREE.PlaneGeometry(width, height),
-        this.frostMaterial,
-        { position: [x, y, WINDOW.frameZ + 0.17] },
-      ));
-    }
-
+    frame.add(this._mesh(new THREE.BoxGeometry(WINDOW.width + 0.35, 0.24, 1.68),this.windowWoodMaterial,
+      {position:[WINDOW.centerX,bottom-0.12,-6.38]}));
+    frame.add(this._mesh(new THREE.BoxGeometry(WINDOW.width + 0.55, 0.12, 0.36),this.windowPaintMaterial,
+      {position:[WINDOW.centerX,bottom-0.22,-5.59]}));
+    this.sillSnowMaterial = this._material(this.snowMaterial.clone()); this.sillSnowMaterial.opacity = 0;
+    frame.add(this._mesh(new THREE.BoxGeometry(9.2,0.035,0.21),this.sillSnowMaterial,
+      {position:[WINDOW.centerX,bottom+0.035,-7.26]}));
     this.environment.add(frame);
+  }
+
+  _bindRealPecoDisplay() {
+    for (const [mesh, box] of [[this.livingCity.crownFront,this.pecoCrownBroadFaceBox],
+      [this.livingCity.crownSide,this.pecoCrownSideFaceBox]]) {
+      const texture = this._texture(this.backdrop.texture.clone());
+      texture.repeat.set(box.width / this.backdrop.width, box.height / this.backdrop.height);
+      texture.offset.set(box.x / this.backdrop.width, (this.backdrop.height-box.y-box.height) / this.backdrop.height);
+      texture.magFilter = THREE.NearestFilter; texture.minFilter = THREE.NearestFilter;
+      texture.needsUpdate = true; mesh.material.map = texture; mesh.material.needsUpdate = true;
+    }
   }
 
   _buildWeather() {
@@ -996,7 +958,9 @@ export class PhiladelphiaWritingRoom {
     this.dropletMaterial = this._material(new THREE.MeshPhysicalMaterial({
       color: 0xc4d3db,
       roughness: 0.09,
-      transmission: 0.12,
+      transmission: 0,
+      clearcoat: 0.75,
+      clearcoatRoughness: 0.12,
       transparent: true,
       opacity: 0,
       depthWrite: false,
@@ -1417,6 +1381,10 @@ export class PhiladelphiaWritingRoom {
     for (const texture of [this.backdrop.texture, this.exteriorVistaTexture]) {
       if (texture) markTextureRegionForUpload(texture, this.pecoCrownRegion, { fullTextureUpload });
     }
+    if (this.livingCity) {
+      this.livingCity.crownFront.material.map.needsUpdate = true;
+      this.livingCity.crownSide.material.map.needsUpdate = true;
+    }
     this.pecoCrownState.frame += 1;
     this.pecoCrownState.lastTick = tick;
     this.pecoCrownState.scrollOffset = staticFrame ? 0 : broadResult.scrollOffset;
@@ -1462,25 +1430,23 @@ export class PhiladelphiaWritingRoom {
     this.activeAutumnLeafCount = leafCount;
     this.updateStride = this.reducedMotion ? Math.max(2, profile.updateStride) : profile.updateStride;
 
-    // The animated typewriter owns hundreds of moving pieces. Low and medium
-    // room tiers keep the painted Philadelphia composition, then restore depth
-    // with a three-draw overlay rather than the full detailed exterior.
-    const simplifiedRoom = next !== 'high';
-    if (this.backdropMesh) this.backdropMesh.visible = simplifiedRoom;
-    if (this.simplifiedWindowDepth) this.simplifiedWindowDepth.visible = simplifiedRoom;
-    if (this.simplifiedPecoCrown) this.simplifiedPecoCrown.visible = simplifiedRoom;
-    if (this.exteriorVista) this.exteriorVista.visible = !simplifiedRoom;
-    if (this.highExteriorHybrid) this.highExteriorHybrid.visible = !simplifiedRoom;
-    if (this.highPecoCrown) this.highPecoCrown.visible = !simplifiedRoom;
-    this.environment.visible = !simplifiedRoom;
-    // The complete modeled exterior is retained as a research/reference layer,
-    // but the high release view uses the more convincing selective hybrid.
+    // Preserve architectural depth at every tier. Particle density remains adaptive.
+    if (this.backdropMesh) this.backdropMesh.visible = false;
+    if (this.windowDepthOverlay) this.windowDepthOverlay.visible = false;
+    for (const layer of [this.simplifiedWindowDepth,this.simplifiedPecoCrown,this.exteriorVista,this.highExteriorHybrid,this.highPecoCrown]) {
+      if (layer) layer.visible = false;
+    }
+    this.environment.visible = true;
     this.exterior.visible = false;
-    this.weatherGroup.position.z = 0;
-    this.precipitationGroup.position.z = simplifiedRoom ? 1.22 : 0;
-    if (this.eveningAmbient) this.eveningAmbient.visible = !simplifiedRoom;
-    if (this.windowFill) this.windowFill.visible = !simplifiedRoom;
-    if (this.warmBounce) this.warmBounce.visible = !simplifiedRoom;
+    if (!this.realSky) {
+      this.realSky = new THREE.Mesh(this._geometry(new THREE.PlaneGeometry(120,65)),this.skyMaterial);
+      this.realSky.position.set(4,15,-45); this.realSky.name = 'DimensionalCitySky'; this.root.add(this.realSky);
+    }
+    this.weatherGroup.position.z = -1.4;
+    this.precipitationGroup.position.z = 0;
+    if (this.eveningAmbient) this.eveningAmbient.visible = true;
+    if (this.windowFill) this.windowFill.visible = true;
+    if (this.warmBounce) this.warmBounce.visible = true;
   }
 
   _applyAtmosphere() {
@@ -1510,9 +1476,10 @@ export class PhiladelphiaWritingRoom {
     this.sillSnowMaterial.opacity = this.weatherState.snow * 0.86;
     for (const material of this.snowCapMaterials) material.opacity = this.weatherState.snow * 0.78;
 
+    this.livingCity?.applyWeather(this.weatherState);
     this.rain.visible = this.weatherState.rain > 0.008;
     this.snow.visible = this.weatherState.snow > 0.008;
-    this.autumnLeaves.visible = this.weatherState.leaves > 0.008;
+    this.autumnLeaves.visible = false; // Ground-aware leaves belong to livingCity.
     this.droplets.visible = this.weatherState.rain > 0.025;
     const vistaBrightness = Math.max(0.72, Math.min(1, this.brightness * lightDip * 0.82));
     this.exteriorVistaMaterial.color.setRGB(vistaBrightness, vistaBrightness, vistaBrightness);
@@ -1668,6 +1635,7 @@ export class PhiladelphiaWritingRoom {
     }
 
     this._applyAtmosphere();
+    this.livingCity?.update(this.elapsed, delta, this.weatherState);
     this.particleAccumulator += delta;
     if (this.frame % this.updateStride === 0) {
       const particleDelta = this.particleAccumulator;
@@ -1775,6 +1743,11 @@ export class PhiladelphiaWritingRoom {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    // Instance attributes have their own WebGL buffers; geometry disposal does
+    // not release them. Dispatch each mesh's disposal before dropping the room.
+    this.root.traverse((object) => {
+      if (object.isInstancedMesh) object.dispose();
+    });
     this.root.removeFromParent();
     this.backdrop?.dispose();
     for (const geometry of this.geometries) geometry.dispose();

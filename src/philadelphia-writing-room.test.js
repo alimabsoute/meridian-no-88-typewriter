@@ -15,7 +15,7 @@ describe('PhiladelphiaWritingRoom', () => {
     });
 
     expect(scene.getObjectByName('PhiladelphiaWritingRoom')).toBe(room.root);
-    expect(scene.getObjectByName('PaintedWoodSashWindow')).toBeTruthy();
+    expect(scene.getObjectByName('PhiladelphiaBayWindow')).toBeTruthy();
     expect(scene.getObjectByName('RearRowhouseBrick')).toBeTruthy();
     expect(room.getState()).toMatchObject({
       stationary: true,
@@ -23,13 +23,13 @@ describe('PhiladelphiaWritingRoom', () => {
       unease: 'subtle',
       effectiveQuality: 'low',
     });
-    expect(room.backdropMesh.visible).toBe(true);
-    expect(room.environment.visible).toBe(false);
+    expect(room.backdropMesh.visible).toBe(false);
+    expect(room.environment.visible).toBe(true);
     expect(room.exterior.visible).toBe(false);
-    expect(room.simplifiedPecoCrown.visible).toBe(true);
+    expect(room.simplifiedPecoCrown.visible).toBe(false);
     expect(room.highPecoCrown.visible).toBe(false);
     expect(scene.getObjectByName('PECOTowerCrownLightsSimplifiedBroadFace')).toBeTruthy();
-    expect(room.eveningAmbient.visible).toBe(false);
+    expect(room.eveningAmbient.visible).toBe(true);
     expect(room.backdrop.weather).toBe('rain');
 
     room.update(1 / 60, 30);
@@ -41,10 +41,10 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(room.backdropMesh.visible).toBe(false);
     expect(room.environment.visible).toBe(true);
     expect(room.exterior.visible).toBe(false);
-    expect(room.exteriorVista.visible).toBe(true);
-    expect(room.highExteriorHybrid.visible).toBe(true);
+    expect(room.exteriorVista.visible).toBe(false);
+    expect(room.highExteriorHybrid.visible).toBe(false);
     expect(room.simplifiedPecoCrown.visible).toBe(false);
-    expect(room.highPecoCrown.visible).toBe(true);
+    expect(room.highPecoCrown.visible).toBe(false);
     expect(room.hybridRearMasses.isInstancedMesh).toBe(true);
     expect(room.hybridRoofDetails.isInstancedMesh).toBe(true);
     expect(room.exteriorVistaTexture.image).toBe(room.backdrop.texture.image);
@@ -52,13 +52,20 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(room.exteriorVistaTexture.repeat.y).toBeCloseTo(408 / 640);
     expect(room.eveningAmbient.visible).toBe(true);
 
+    const instanceDisposals = [];
+    room.root.traverse((object) => {
+      if (object.isInstancedMesh) instanceDisposals.push(vi.spyOn(object, 'dispose'));
+    });
+    expect(instanceDisposals.length).toBeGreaterThanOrEqual(27);
     room.dispose();
+    room.dispose();
+    for (const spy of instanceDisposals) expect(spy).toHaveBeenCalledTimes(1);
     expect(scene.getObjectByName('PhiladelphiaWritingRoom')).toBeUndefined();
     expect(room.disposed).toBe(true);
     expect(events).toEqual([]);
   }, 15_000);
 
-  it('renders a restrained autumn leaf layer over the clear-dusk backdrop', () => {
+  it('moves dimensional leaves and preserves the bay and skyline across quality tiers', () => {
     const scene = new THREE.Scene();
     const room = new PhiladelphiaWritingRoom({
       scene,
@@ -74,15 +81,24 @@ describe('PhiladelphiaWritingRoom', () => {
     });
     expect(room.backdrop.weather).toBe('autumn-wind');
     expect(room.autumnLeaves.name).toBe('ExteriorAutumnLeaves');
-    expect(room.autumnLeaves.visible).toBe(true);
+    expect(room.autumnLeaves.visible).toBe(false);
+    expect(room.livingCity.root.visible).toBe(true);
     expect(room.autumnLeaves.count).toBe(5);
 
-    const before = Array.from(room.autumnLeaves.instanceMatrix.array);
+    const before = Array.from(room.livingCity.leaves.instanceMatrix.array);
     const glassDrift = room.glassAtmosphereMaterial.uniforms.drift.value;
     room.update(1 / 30);
-    expect(Array.from(room.autumnLeaves.instanceMatrix.array)).not.toEqual(before);
+    expect(Array.from(room.livingCity.leaves.instanceMatrix.array)).not.toEqual(before);
     expect(room.glassAtmosphereMaterial.uniforms.drift.value).toBeGreaterThan(glassDrift);
-    expect(room.simplifiedWindowDepth.visible).toBe(true);
+    expect(room.simplifiedWindowDepth.visible).toBe(false);
+    expect(room.livingCity.crownFront.isMesh).toBe(true);
+    expect(room.livingCity.crownSide.rotation.y).toBeCloseTo(Math.PI / 2);
+    for (const tier of ['low', 'medium', 'high']) {
+      room.setQuality(tier);
+      expect(room.livingCity.root.visible).toBe(true);
+      expect(room.root.getObjectByName('OneLibertyPlace')).toBeTruthy();
+      expect(room.root.getObjectByName('ComcastCenter')).toBeTruthy();
+    }
     expect(room.depthFrame.isInstancedMesh).toBe(true);
     room.dispose();
   }, 15_000);
@@ -98,15 +114,19 @@ describe('PhiladelphiaWritingRoom', () => {
       seed: 211,
     });
 
-    const leafMatrices = Array.from(room.autumnLeaves.instanceMatrix.array);
+    const actorPositions = room.livingCity.actors.map(({object}) => object.position.toArray());
+    const treeRotations = room.livingCity.trees.map(({tree}) => tree.rotation.toArray());
+    const leafMatrices = Array.from(room.livingCity.leaves.instanceMatrix.array);
     const glassDrift = room.glassAtmosphereMaterial.uniforms.drift.value;
     const initialState = room.getState();
     room.update(30, 300);
 
-    expect(Array.from(room.autumnLeaves.instanceMatrix.array)).toEqual(leafMatrices);
+    expect(Array.from(room.livingCity.leaves.instanceMatrix.array)).toEqual(leafMatrices);
     expect(room.getState().weatherLevels).toEqual(initialState.weatherLevels);
     expect(room.getState().uneaseSignal).toBe(0);
     expect(room.elapsed).toBe(0);
+    expect(room.livingCity.actors.map(({object}) => object.position.toArray())).toEqual(actorPositions);
+    expect(room.livingCity.trees.map(({tree}) => tree.rotation.toArray())).toEqual(treeRotations);
     expect(room.glassAtmosphereMaterial.uniforms.drift.value).toBe(glassDrift);
 
     room.setWeatherPreset('nor-easter');
@@ -144,6 +164,9 @@ describe('PhiladelphiaWritingRoom', () => {
       }
       return pixels;
     };
+    const realTexture = room.livingCity.crownFront.material.map;
+    expect(realTexture.image).toBe(room.backdrop.texture.image);
+    const initialRealVersion = realTexture.version;
     const initialPixels = crownBytes();
     const backdropVersion = room.backdrop.texture.version;
     const backdropTextureDispose = vi.spyOn(room.backdrop.texture, 'dispose');
@@ -176,6 +199,7 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(advanced.scrollOffset).toBeGreaterThan(0);
     expect(advanced.frame).toBeGreaterThan(initial.frame);
     expect(crownBytes()).not.toEqual(initialPixels);
+    expect(realTexture.version).toBeGreaterThan(initialRealVersion);
     expect(room.backdrop.texture.version).toBeGreaterThan(backdropVersion);
     expect(room.backdrop.texture.updateRanges).toHaveLength(crownBox.height);
     expect(room.exteriorVistaTexture.updateRanges).toHaveLength(crownBox.height);
@@ -183,7 +207,7 @@ describe('PhiladelphiaWritingRoom', () => {
     room.setQuality('high');
     expect(room.getState().pecoCrown).toEqual(advanced);
     expect(room.simplifiedPecoCrown.visible).toBe(false);
-    expect(room.highPecoCrown.visible).toBe(true);
+    expect(room.highPecoCrown.visible).toBe(false);
 
     room.setReducedMotion(true);
     const staticCrown = room.getState().pecoCrown;
@@ -201,4 +225,26 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(vistaTextureDispose).toHaveBeenCalledTimes(1);
     expect(backdropMaterialDispose).toHaveBeenCalledTimes(1);
   }, 15_000);
+  it('lands airborne leaves on the sidewalk and bounds their lifetime and count', () => {
+    const room = new PhiladelphiaWritingRoom({scene: new THREE.Scene(),weather:'autumn-wind',quality:'low'});
+    const leaf = room.livingCity.leafData[149]; leaf.y = 0.001; leaf.rest = 100;
+    room.livingCity.update(12,1,room.weatherState);
+    expect(leaf.y).toBe(-0.12);
+    for(let i=0;i<500;i++) room.livingCity.update(12+i*0.075,0.075,room.weatherState);
+    expect(room.livingCity.leaves.count).toBe(150);
+    expect(room.livingCity.leafData.every(l => Number.isFinite(l.x) && l.y >= -0.12)).toBe(true);
+    leaf.y=-0.12;leaf.rest=-1;leaf.visibility=0.01;
+    room.livingCity.update(0,0.1,{...room.weatherState,wind:1});
+    expect(leaf.y).toBeGreaterThan(2);
+    expect(leaf.visibility).toBe(0);
+    for(const actor of room.livingCity.actors) {
+      const expectedGround=actor.object.name==='DistantPedestrian'?-0.18:-0.32;
+      expect(actor.object.position.y).toBe(expectedGround);
+      const bounds=new THREE.Box3().setFromObject(actor.object);
+      expect(bounds.min.y).toBeGreaterThanOrEqual(expectedGround-0.003);
+      expect(bounds.min.y).toBeLessThanOrEqual(expectedGround+0.003);
+    }
+    room.dispose();
+  }, 15000);
+
 });

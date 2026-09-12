@@ -1,3 +1,8 @@
+async function openWorkbench(page, name) {
+  if (await page.locator('#app').getAttribute('data-workbench-panel') !== name) {
+    await page.click(`[data-workbench="${name}"]`);
+  }
+}
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
@@ -189,10 +194,10 @@ try {
   await enterSimulator(page);
   await page.waitForFunction(() => {
     const api = window.__OCTOBERLINE_211__;
-    return Math.abs(api.camera.position.x) < 0.02
-      && Math.abs(api.camera.position.y - 5.45) < 0.02
-      && Math.abs(api.camera.position.z - 15.1) < 0.02
-      && Math.abs(api.camera.fov - 37) < 0.02;
+    return Math.abs(api.camera.position.x - 1.2) < 0.02
+      && Math.abs(api.camera.position.y - 5.7) < 0.02
+      && Math.abs(api.camera.position.z - 16.8) < 0.02
+      && Math.abs(api.camera.fov - 43) < 0.02;
   });
   const entry = await page.evaluate((before) => ({
     before,
@@ -210,14 +215,14 @@ try {
     roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
   }), entryStart);
   invariant(
-    entry.before.position[0] > 8
-      && Math.abs(entry.position[0]) < 0.02
-      && Math.abs(entry.position[1] - 5.45) < 0.02
-      && Math.abs(entry.position[2] - 15.1) < 0.02
-      && Math.abs(entry.target[0]) < 0.02
-      && Math.abs(entry.target[1] - 1.35) < 0.02
-      && Math.abs(entry.target[2] - 0.55) < 0.02
-      && Math.abs(entry.fov - 37) < 0.02
+    Math.abs(entry.before.position[0] - 4.2) < 0.02 && Math.abs(entry.before.position[2] - 13.2) < 0.02
+      && Math.abs(entry.position[0] - 1.2) < 0.02
+      && Math.abs(entry.position[1] - 5.7) < 0.02
+      && Math.abs(entry.position[2] - 16.8) < 0.02
+      && Math.abs(entry.target[0] - 1.65) < 0.02
+      && Math.abs(entry.target[1] - 3.45) < 0.02
+      && Math.abs(entry.target[2] + 2.1) < 0.02
+      && Math.abs(entry.fov - 43) < 0.02
       && entry.activeView === 'front'
       && entry.mobileView === 'front'
       && entry.overlayHidden === 'true'
@@ -257,7 +262,7 @@ try {
   await page.keyboard.up('Shift');
   await page.waitForFunction(() => window.__OCTOBERLINE_211__.document.marks.length === 1);
 
-  await page.click('#document-toggle');
+  await page.click('[data-workbench=paper]');
   const coachTrayCollision = await page.evaluate(() => ({
     trayOpen: document.querySelector('.document-tray')?.classList.contains('open'),
     coachVisibility: getComputedStyle(document.querySelector('#first-sheet-coach')).visibility,
@@ -267,19 +272,26 @@ try {
     coachTrayCollision.trayOpen && coachTrayCollision.coachVisibility === 'hidden' && coachTrayCollision.coachPointerEvents === 'none',
     `Coach must yield to the document tray: ${JSON.stringify(coachTrayCollision)}`,
   );
-  await page.click('#document-toggle');
+  await page.click('[data-workbench=paper]');
 
   // The coach may overlap the central scene but must never block mechanical controls.
+  await openWorkbench(page, 'machine');
   await page.click('#inspection-toggle');
   await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 1);
+  await openWorkbench(page, 'machine');
   await page.click('#inspection-toggle');
   await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 0);
 
   // A physical margin-stop drag owns the pointer until it completes, then
   // restores inspection orbit controls even if pointer capture is lost.
+  await openWorkbench(page, 'machine');
   await page.click('#inspection-toggle');
-  await page.evaluate(() => window.__OCTOBERLINE_211__.setView('carriage'));
-  await page.waitForTimeout(900);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.__OCTOBERLINE_211__.setView('carriage', 0.01));
+  await page.waitForFunction(() => {
+    const p = window.__OCTOBERLINE_211__.camera.position;
+    return Math.abs(p.x + 6.8) < 0.02 && Math.abs(p.y - 5) < 0.02 && Math.abs(p.z - 7.2) < 0.02;
+  });
   const leftStop = await page.evaluate(() => {
     const api = window.__OCTOBERLINE_211__;
     const point = api.model.marginStops.left.getWorldPosition(api.model.marginStops.left.position.clone());
@@ -297,6 +309,7 @@ try {
     active: window.__OCTOBERLINE_211__.marginDragActive,
     controlsEnabled: window.__OCTOBERLINE_211__.controls.enabled,
   }));
+  if (!marginDragStarted.active) await page.screenshot({ path: path.join(root, 'visual-checks', 'margin-drag-failure.png') });
   invariant(marginDragStarted.active && !marginDragStarted.controlsEnabled, `Margin drag did not suspend orbit controls: ${JSON.stringify(marginDragStarted)}`);
   await page.mouse.move(leftStop.x + 52, leftStop.y, { steps: 3 });
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));
@@ -308,8 +321,10 @@ try {
   await page.mouse.up();
   invariant(!marginDragFinished.active && marginDragFinished.controlsEnabled, `Margin drag cleanup failed: ${JSON.stringify(marginDragFinished)}`);
   invariant(marginDragFinished.leftMargin !== leftStop.before, `Physical margin stop did not move: ${JSON.stringify({ leftStop, marginDragFinished })}`);
+  await openWorkbench(page, 'machine');
   await page.click('#inspection-toggle');
 
+  await openWorkbench(page, 'machine');
   await page.click('[data-touch-preset="heavy"]');
   const heavyTouch = await page.evaluate(() => window.__OCTOBERLINE_211__.model.getMechanicalSettings());
   invariant(heavyTouch.touchPreset === 'heavy', `Heavy touch did not reach the model: ${JSON.stringify(heavyTouch)}`);
@@ -343,7 +358,7 @@ try {
   }));
   invariant(quiet.enabled && !quiet.faded && !quiet.captured && quiet.inputStatus === 'INPUT RELEASED', `Quiet-mode recovery mismatch: ${JSON.stringify(quiet)}`);
 
-  await page.click('.environment-summary');
+  await openWorkbench(page, 'room');
   await page.click('#atmosphere-pause');
   const paused = await page.evaluate(async () => {
     const before = window.__OCTOBERLINE_211__.room.elapsed;
@@ -386,8 +401,9 @@ try {
   invariant(await page.locator('#guide-tab-research').getAttribute('aria-selected') === 'true', 'Arrow-key tab navigation did not select Research.');
   await page.keyboard.press('Escape');
 
-  await page.click('#document-toggle');
+  await page.click('[data-workbench=paper]');
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
+  await openWorkbench(page, 'export');
   const paperDesk = await page.evaluate(() => ({
     cards: document.querySelectorAll('#paper-desk-list .paper-card').length,
     selected: document.querySelector('#paper-desk-list .paper-card[aria-pressed="true"]')?.dataset.pageId,
@@ -449,15 +465,27 @@ try {
     }
     return performance.now() - started;
   });
-  await page.click('#document-toggle');
-  const manySheetsStarted = Date.now();
-  await page.click('#document-toggle');
-  await page.waitForFunction(() => document.querySelectorAll('#paper-desk-list .paper-card').length >= 40);
-  const paperDeskScale = await page.evaluate((started) => ({
-    renderMs: Date.now() - started,
+  await page.keyboard.press('Escape');
+  // Measure browser response from the actual click, excluding automation transport.
+  await page.evaluate(() => {
+    document.querySelector('[data-workbench="export"]').addEventListener('click', () => {
+      const started = performance.now();
+      const observer = new MutationObserver(() => {
+        if (document.querySelectorAll('#paper-desk-list .paper-card').length >= 40) {
+          window.__paperDeskRenderMs = performance.now() - started;
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.querySelector('#paper-desk-list'), { childList: true });
+    }, { capture: true, once: true });
+  });
+  await openWorkbench(page, 'export');
+  await page.waitForFunction(() => Number.isFinite(window.__paperDeskRenderMs));
+  const paperDeskScale = await page.evaluate(() => ({
+    renderMs: window.__paperDeskRenderMs,
     cards: document.querySelectorAll('#paper-desk-list .paper-card').length,
     cacheSize: window.__OCTOBERLINE_211__.paperThumbnailCacheSize,
-  }), manySheetsStarted);
+  }));
   invariant(paperDeskScale.cacheSize <= 32 && paperDeskScale.renderMs < 1_500, `Paper desk does not scale safely: ${JSON.stringify({ archiveBuild, paperDeskScale })}`);
   await page.waitForFunction(
     () => [...document.querySelectorAll('#paper-desk-list .paper-card-thumb')]
@@ -536,15 +564,15 @@ try {
       elapsedStatic: room.elapsed === before,
     };
   });
-  invariant(mobileState.selectDisplay !== 'none' && mobileState.viewButtonDisplay === 'none', `Mobile camera UI mismatch: ${JSON.stringify(mobileState)}`);
+  invariant(mobileState.selectDisplay === 'none' && mobileState.viewButtonDisplay !== 'none', `Mobile camera UI mismatch: ${JSON.stringify(mobileState)}`);
   invariant(mobileState.mobileInputDisplay !== 'none', `Mobile typing input is hidden: ${JSON.stringify(mobileState)}`);
   invariant(mobileState.reducedMotion && mobileState.elapsedStatic, `Reduced-motion room is not static: ${JSON.stringify(mobileState)}`);
 
-  await mobilePage.click('#mobile-mechanics-toggle');
+  await openWorkbench(mobilePage, 'machine');
   const mobileMechanics = await mobilePage.evaluate(() => ({
     expanded: document.querySelector('#mobile-mechanics-toggle')?.getAttribute('aria-expanded'),
     display: getComputedStyle(document.querySelector('.mechanism-card')).display,
-    closeDisplay: getComputedStyle(document.querySelector('#mobile-mechanics-close')).display,
+    closeDisplay: getComputedStyle(document.querySelector('.mechanism-card .workbench-close')).display,
     keyboardCaptured: window.__OCTOBERLINE_211__.keyboardCaptured,
   }));
   invariant(
@@ -554,10 +582,10 @@ try {
   );
   await mobilePage.click('[data-touch-preset="heavy"]');
   invariant(await mobilePage.evaluate(() => window.__OCTOBERLINE_211__.model.getMechanicalSettings().touchPreset) === 'heavy', 'Mobile touch calibration did not reach the model.');
-  await mobilePage.click('#mobile-mechanics-close');
+  await mobilePage.click('.mechanism-card .workbench-close');
 
   const guardedMarks = await mobilePage.evaluate(() => window.__OCTOBERLINE_211__.document.marks.length);
-  await mobilePage.click('.environment-summary');
+  await openWorkbench(mobilePage, 'room');
   const environmentGuard = await mobilePage.evaluate(() => {
     const input = document.querySelector('#mobile-input');
     const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'x' });

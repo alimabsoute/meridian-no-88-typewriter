@@ -1,3 +1,8 @@
+async function openWorkbench(page, name) {
+  if (await page.locator('#app').getAttribute('data-workbench-panel') !== name) {
+    await page.click(`[data-workbench="${name}"]`);
+  }
+}
 import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_PREVIEW_URL,
@@ -174,15 +179,27 @@ async function waitForSimulator(page) {
 }
 
 async function openDocumentTray(page) {
-  if (await page.locator('#document-toggle').getAttribute('aria-expanded') !== 'true') {
-    await page.click('#document-toggle');
+  if (await page.locator('#app').getAttribute('data-workbench-panel') !== 'paper') {
+    try { await page.click('[data-workbench=paper]'); }
+    catch (error) {
+      console.error('Paper toolbar failure state', await page.evaluate(() => {
+        const button = document.querySelector('[data-workbench=paper]');
+        const css = getComputedStyle(button);
+        return { app: document.querySelector('#app').className, panel: document.querySelector('#app').dataset.workbenchPanel,
+          visibility: css.visibility, display: css.display, rect: button.getBoundingClientRect().toJSON(),
+          inert: button.closest('[inert]')?.className, phase: window.__OCTOBERLINE_211__.paperView.phase,
+          quiet: window.__OCTOBERLINE_211__.quietModeEnabled, captured: window.__OCTOBERLINE_211__.keyboardCaptured };
+      }));
+      await page.screenshot({ path: 'visual-checks/interaction-paper-toolbar-failure.png' });
+      throw error;
+    }
   }
   await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'true');
 }
 
 async function openEnvironmentPanel(page) {
   if (!(await page.locator('.environment-card').evaluate((element) => element.open))) {
-    await page.click('.environment-summary');
+    await openWorkbench(page, 'room');
   }
   await page.waitForFunction(() => document.querySelector('.environment-card')?.open);
 }
@@ -249,12 +266,15 @@ await page.waitForFunction(() => document.querySelector('#document-toggle')?.get
 await openEnvironmentPanel(page);
 await page.click('.audio-mix summary');
 await page.waitForFunction(() => document.querySelector('.audio-mix')?.open);
+await openWorkbench(page, 'view');
 await page.click('[data-view="front"]');
 await page.waitForFunction(() => !document.querySelector('.audio-mix')?.open);
 
-await page.click('#inspection-toggle');
+await openWorkbench(page, 'machine');
+  await page.click('#inspection-toggle');
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 1);
 await openDocumentTray(page);
+await openWorkbench(page, 'view');
 await page.click('[data-view="front"]');
 await page.waitForFunction(() => document.querySelector('#document-toggle')?.getAttribute('aria-expanded') === 'false');
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.model.inspectionTarget === 0);
@@ -282,8 +302,9 @@ if (
   || modalUiState.audioMixOpen
   || modalUiState.activeView !== 'front'
   || modalUiState.activeViewPressed !== 'true'
-  || Math.abs(modalUiState.cameraPosition[0]) > 0.01
-  || modalUiState.cameraPosition[2] < 15
+  || Math.abs(modalUiState.cameraPosition[0] - 1.2) > 0.02
+  || Math.abs(modalUiState.cameraPosition[1] - 5.7) > 0.02
+  || Math.abs(modalUiState.cameraPosition[2] - 16.8) > 0.02
   || modalUiState.inspectionPressed !== 'false'
   || modalUiState.inspectionTarget !== 0
   || !modalUiState.keyboardCaptured
@@ -297,6 +318,7 @@ if (
 ) {
   throw new Error(`Modal, camera, or readability regression: ${JSON.stringify(modalUiState)}`);
 }
+console.log('PASS: modal controls, camera and readability');
 await page.evaluate(() => window.__OCTOBERLINE_211__.setView('writer', 0));
 await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
 
@@ -516,13 +538,13 @@ try {
     || !initialReduced.roomReduced
     || initialReduced.transitionMilliseconds > 180
     || initialReduced.previewDepression !== 0
-    || Math.abs(reducedEntry.position[0]) > 0.02
-    || Math.abs(reducedEntry.position[1] - 5.45) > 0.02
-    || Math.abs(reducedEntry.position[2] - 15.1) > 0.02
-    || Math.abs(reducedEntry.target[0]) > 0.02
-    || Math.abs(reducedEntry.target[1] - 1.35) > 0.02
-    || Math.abs(reducedEntry.target[2] - 0.55) > 0.02
-    || Math.abs(reducedEntry.fov - 37) > 0.02
+    || Math.abs(reducedEntry.position[0] - 1.2) > 0.02
+    || Math.abs(reducedEntry.position[1] - 5.7) > 0.02
+    || Math.abs(reducedEntry.position[2] - 16.8) > 0.02
+    || Math.abs(reducedEntry.target[0] - 1.65) > 0.02
+    || Math.abs(reducedEntry.target[1] - 3.45) > 0.02
+    || Math.abs(reducedEntry.target[2] + 2.1) > 0.02
+    || Math.abs(reducedEntry.fov - 43) > 0.02
     || reducedEntry.activeView !== 'front'
     || reducedEntry.overlayHidden !== 'true'
     || normalMotion.mediaMatches
@@ -687,6 +709,7 @@ try {
 
 await page.keyboard.press('Enter');
 await settleKeyboardModel(page, []);
+await openWorkbench(page, 'ink');
 await page.click('[data-ink="red"]');
 await page.waitForFunction(() => document.activeElement?.id === 'scene');
 await page.keyboard.type('Red ribbon test?', { delay: 12 });
@@ -719,8 +742,10 @@ const expectedExport = await page.evaluate(() => ({
   pngDataUrl: window.__OCTOBERLINE_211__.model.paperRenderer.canvas.toDataURL('image/png'),
 }));
 
+await openWorkbench(page, 'export');
 const textDownloadPromise = page.waitForEvent('download');
 await page.click('#download-text');
+console.log('PASS: TXT export dispatch');
 const textDownload = await textDownloadPromise;
 const textDownloadPath = await textDownload.path();
 if (!textDownloadPath) throw new Error('TXT download did not produce a readable file.');
@@ -771,7 +796,9 @@ await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.manuscrip
 
 // A kept page must restore the ribbon selector, modeled mechanism, and
 // checkpoint metadata to the archived ink mode before overtyping resumes.
+console.log('CHECK: restore filed manuscript');
 await page.click('#restore-manuscript');
+console.log('PASS: restore manuscript dispatch');
 await advancePaperMotions(page);
 await page.waitForFunction(
   () => window.__OCTOBERLINE_211__.paperState.looseSheet && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting',
@@ -787,6 +814,7 @@ if (restoredInkState.modelInk !== 'red' || restoredInkState.activeInk !== 'red' 
   throw new Error(`Restored ink selector mismatch: ${JSON.stringify(restoredInkState)}`);
 }
 await page.click('#reinsert-sheet');
+console.log('PASS: reinsert sheet dispatch');
 await advancePaperMotions(page);
 await page.waitForFunction(
   () => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle',
@@ -802,6 +830,7 @@ await advancePaperMotions(page);
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.manuscript.length === 1 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 
 await page.click('#load-sheet');
+console.log('PASS: fresh paper dispatch');
 await advancePaperMotions(page);
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 2 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 const newSheetState = await page.evaluate(() => ({
@@ -833,6 +862,7 @@ await page.click('#recover-sheet');
 await advancePaperMotions(page);
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.looseSheet && window.__OCTOBERLINE_211__.paperView.phase === 'inspecting', null, { timeout: 15000 });
 await page.click('#reinsert-sheet');
+console.log('PASS: reinsert sheet dispatch');
 await advancePaperMotions(page);
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber === 2 && window.__OCTOBERLINE_211__.paperView.phase === 'idle', null, { timeout: 15000 });
 const recoveredText = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
@@ -1051,7 +1081,7 @@ for (const [label, quality, expectedQuality] of [
       backdropVisible: window.__OCTOBERLINE_211__.room.backdropMesh.visible,
       detailedRoomVisible: window.__OCTOBERLINE_211__.room.environment.visible,
     }));
-    const expectedBackdrop = expectedQuality !== 'high';
+    const expectedBackdrop = false;
     if (
       qualityState.text !== 'q'
       || qualityState.quality !== expectedQuality

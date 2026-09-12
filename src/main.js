@@ -3,6 +3,8 @@ import '@fontsource/special-elite/400.css';
 import './styles.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { initWorkbench } from './workbench-ui.js';
 import { TypewriterDocument } from './typewriter-document.js';
 import { PaperRenderer } from './textures.js';
 import { TypewriterAudio } from './audio-engine.js';
@@ -140,20 +142,29 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x11191b);
 scene.fog = new THREE.FogExp2(0x11191b, 0.012);
+// Broad, softly reflected studio surfaces make enamel and rolled metal readable.
+// This is generated locally once; the exterior retains its own dusk lighting.
+const reflectionGenerator = new THREE.PMREMGenerator(renderer);
+const reflectionRoom = new RoomEnvironment();
+const studioReflection = reflectionGenerator.fromScene(reflectionRoom, 0.04);
+scene.environment = studioReflection.texture;
+scene.environmentIntensity = 0.22;
+reflectionRoom.dispose();
+reflectionGenerator.dispose();
 
 const compactLandingCamera = window.innerWidth <= 900;
 const camera = new THREE.PerspectiveCamera(compactLandingCamera ? 50 : 37, window.innerWidth / window.innerHeight, 0.05, 80);
-camera.position.set(...(compactLandingCamera ? [13.65, 6.48, 12.94] : [8.45, 5.85, 11.4]));
+camera.position.set(4.2, 5.8, 13.2);
 
 const controls = new OrbitControls(camera, canvas);
 canvas.style.cursor = 'default';
-controls.target.set(...(compactLandingCamera ? [4.15, 1.43, 0.55] : [0, 1.43, 0.55]));
+controls.target.set(...(compactLandingCamera ? [2.8, 2.8, -1.5] : [0.7, 2.6, -0.1]));
 controls.enableDamping = true;
 controls.dampingFactor = 0.065;
 controls.minDistance = 6.4;
-controls.maxDistance = 16.5;
+controls.maxDistance = 22;
 controls.minPolarAngle = 0.5;
-controls.maxPolarAngle = 1.38;
+controls.maxPolarAngle = 1.49;
 controls.minAzimuthAngle = -1.02;
 controls.maxAzimuthAngle = 1.02;
 controls.maxTargetRadius = 4.5;
@@ -248,6 +259,7 @@ let paperCheckpointTimer = 0;
 let keyboardCaptured = false;
 let inkMode = initialInkMode;
 let cameraMotion = null;
+let currentCameraView = 'writer';
 let statusFlash = 0;
 let inspectionEnabled = false;
 let paperActionBusy = false;
@@ -289,6 +301,7 @@ function setKeyboardCaptured(captured) {
 
 function inputSurfaceAvailable() {
   return refs['intro-overlay'].classList.contains('dismissed')
+    && !['view', 'ink'].includes(app.dataset.workbenchPanel)
     && !refs['field-guide'].open
     && !documentTray.classList.contains('open')
     && !environmentPanel.open
@@ -855,6 +868,7 @@ function handleStatus(event) {
 }
 
 const model = new TypewriterModel({
+  reducedMotion: reducedMotionQuery.matches,
   scene,
   documentState: page,
   paperRenderer,
@@ -1022,14 +1036,14 @@ updateDocumentUi();
 
 const CAMERA_PRESETS = {
   writer: {
-    position: new THREE.Vector3(8.45, 5.85, 11.4),
-    target: new THREE.Vector3(0, 1.43, 0.55),
+    position: new THREE.Vector3(4.2, 5.8, 13.2),
+    target: new THREE.Vector3(0.7, 2.6, -0.1),
     fov: 37,
   },
   front: {
-    position: new THREE.Vector3(0, 5.45, 15.1),
-    target: new THREE.Vector3(0, 1.35, 0.55),
-    fov: 37,
+    position: new THREE.Vector3(1.2, 5.7, 16.8),
+    target: new THREE.Vector3(1.65, 3.45, -2.1),
+    fov: 43,
   },
   mechanism: {
     position: new THREE.Vector3(7.2, 4.3, 7.0),
@@ -1052,16 +1066,19 @@ const CAMERA_PRESETS = {
 function setCameraView(name, duration = 0.9) {
   const preset = CAMERA_PRESETS[name];
   if (!preset) return;
+  currentCameraView = name;
+  const compact = window.innerWidth <= 900;
+  const compactTarget = compact && name === 'writer' ? new THREE.Vector3(2.8, 2.8, -1.5) : null;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   cameraMotion = {
     fromPosition: camera.position.clone(),
     fromTarget: controls.target.clone(),
     fromFov: camera.fov,
     toPosition: preset.position.clone(),
-    toTarget: preset.target.clone(),
-    toFov: preset.fov ?? 37,
+    toTarget: compactTarget ?? preset.target.clone(),
+    toFov: compact && ['writer', 'front'].includes(name) ? 50 : preset.fov ?? 37,
     elapsed: 0,
-    duration: reduced ? 0.01 : duration,
+    duration: reduced ? 0.01 : Math.max(0.001, duration),
   };
   document.querySelectorAll('.view-button').forEach((button) => {
     const active = button.dataset.view === name;
@@ -1812,7 +1829,11 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-reducedMotionQuery.addEventListener?.('change', (event) => room.setReducedMotion(event.matches));
+reducedMotionQuery.addEventListener?.('change', (event) => {
+  room.setReducedMotion(event.matches);
+  model.reducedMotion = event.matches;
+  paperView.reducedMotion = event.matches;
+});
 
 const mobileInput = document.getElementById('mobile-input');
 
@@ -2060,9 +2081,11 @@ function resize() {
   const height = window.innerHeight;
   if (!refs['intro-overlay'].classList.contains('dismissed') && !cameraMotion) {
     const compact = width <= 900;
-    camera.position.set(...(compact ? [13.65, 6.48, 12.94] : [8.45, 5.85, 11.4]));
-    controls.target.set(...(compact ? [4.15, 1.43, 0.55] : [0, 1.43, 0.55]));
+    camera.position.set(4.2, 5.8, 13.2);
+    controls.target.set(...(compact ? [2.8, 2.8, -1.5] : [0.7, 2.6, -0.1]));
     camera.fov = compact ? 50 : 37;
+  } else if (refs['intro-overlay'].classList.contains('dismissed')) {
+    setCameraView(currentCameraView, 0.01);
   }
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
@@ -2098,7 +2121,8 @@ function updateLiveUi(delta) {
 
 function animate(now) {
   requestAnimationFrame(animate);
-  const delta = Math.max(0, Math.min(0.05, (now - lastTime) / 1000));
+  const elapsedDelta = Math.max(0, (now - lastTime) / 1000);
+  const delta = Math.min(0.05, elapsedDelta);
   lastTime = now;
   model.update(delta);
   paperView.update(delta);
@@ -2106,7 +2130,9 @@ function animate(now) {
     room.update(delta);
     atmosphereAudio.update(delta, room.getState());
   }
-  updateCameraMotion(delta);
+  // Camera easing follows wall time even when rendering is under load. The
+  // mechanical and paper integrators keep their bounded simulation steps.
+  updateCameraMotion(elapsedDelta);
   controls.update();
   updateLiveUi(delta);
   renderer.render(scene, camera);
@@ -2121,6 +2147,11 @@ function animate(now) {
   }
 }
 
+const workbench = initWorkbench({
+  onOpen: () => { setKeyboardCaptured(false); model.setShiftHeld(false); },
+  onClose: () => { revealQuietInterface(); },
+});
+
 requestAnimationFrame(animate);
 
 window.addEventListener('pagehide', () => checkpointInsertedSheet(true));
@@ -2130,6 +2161,7 @@ if (renderer.compileAsync) {
 }
 
 window[BRAND.browserNamespace] = {
+  workbench,
   model,
   audio,
   camera,
