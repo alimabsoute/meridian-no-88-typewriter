@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createPhiladelphiaLandmarks } from './philadelphia-landmarks.js';
+import { createPhiladelphiaStreetscape } from './philadelphia-streetscape.js';
 
 // Small deterministic surface maps, generated without a canvas or image assets.
 function surfaceTexture(room, width, height, pixel) {
@@ -22,18 +24,20 @@ export function createLivingPhiladelphia(room) {
   room.root.add(root);
   const rng = room.rng;
   const mat = (color, extra = {}) => room._material(new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra }));
-  const facadeTexture=surfaceTexture(room,128,256,(x,y)=>{
-    const vertical=x%16<2, horizontal=y%12<2;
-    const cell=Math.floor(x/16)*73+Math.floor(y/12)*137;
-    const reflection=Math.sin(x*0.09+y*0.035)*6;
-    const level=vertical?80:horizontal?43:35+(cell%17)+reflection;
-    return [level*0.85,level,level*1.13,255];
+  const facadeTexture=surfaceTexture(room,512,1024,(x,y)=>{
+    const vertical=x%24<2, horizontal=y%32<3;
+    const cell=Math.floor(x/24)*73+Math.floor(y/32)*137;
+    const sky=35+Math.pow(y/1024,1.5)*45;
+    const reflection=Math.sin(x*.018+y*.004)*15+Math.sin(x*.061)*7;
+    const level=vertical?82:horizontal?27:sky+(cell%13)+reflection;
+    return [level*.83,level*.96,level*1.08,255];
   });
-  const stone = mat(0x849098,{map:facadeTexture}), metal = mat(0x8497a3, {map:facadeTexture, metalness: 0.28, roughness: 0.5 });
-  const trim = mat(0x697781), bark = mat(0x493829), street = mat(0x343a3b);
+  const stone = mat(0x8296a0,{map:facadeTexture,metalness:.58,roughness:.24,emissive:0x687b8b,emissiveMap:facadeTexture,emissiveIntensity:.23});
+  const trim = mat(0x697781,{metalness:.65,roughness:.32}), street = mat(0x343a3b);
+  const barkTexture=surfaceTexture(room,128,512,(x,y)=>{const grain=125+Math.sin(x*.4+Math.sin(y*.037)*1.8)*27+Math.sin(x*1.6+y*.007)*13;return [grain,grain*.89,grain*.74,255];});
+  const bark = mat(0x695747,{map:barkTexture,bumpMap:barkTexture,bumpScale:.012});
   const pavement = mat(0x73706a), roof = mat(0x323638);
   const boxGeometry = room._geometry(new THREE.BoxGeometry(1, 1, 1));
-  const sphereGeometry = room._geometry(new THREE.IcosahedronGeometry(1, 0));
   function box(name, x,y,z,w,h,d, material = stone, parent = root) {
     const mesh = new THREE.Mesh(boxGeometry, material);
     mesh.name = name; mesh.position.set(x,y,z); mesh.scale.set(w,h,d); parent.add(mesh); return mesh;
@@ -48,7 +52,7 @@ export function createLivingPhiladelphia(room) {
   const officeMaterials = Array.from({length: 5},(_,i)=>mat(0x857254,{emissive:0xd4a86b,emissiveIntensity:0.15+i*0.08}));
   const officeTransforms = officeMaterials.map(()=>[]);
   const dummy = new THREE.Object3D();
-  function tower(name,x,z,w,h,d, material=metal) {
+  function tower(name,x,z,w,h,d, material=stone) {
     const group = new THREE.Group(); group.name=name; root.add(group);
     box(name+'Structure',x,h/2,z,w,h,d,material,staticGroup);
     for(let column=0;column<=8;column++) box(name+'FacadeMullion',x-w/2+column*w/8,h/2,z+d/2+0.009,0.014,h,0.018,trim,staticGroup);
@@ -70,38 +74,36 @@ export function createLivingPhiladelphia(room) {
   crownFront.name='PECORealScrollingBroadFace';crownFront.position.set(6.0,6.3,-24.2);root.add(crownFront);
   const crownSide = new THREE.Mesh(room._geometry(new THREE.PlaneGeometry(1.55,0.61)),room._material(new THREE.MeshBasicMaterial({color:0xffffff})));
   crownSide.name='PECORealScrollingSideFace';crownSide.position.set(7.62,6.3,-25);crownSide.rotation.y=Math.PI/2;root.add(crownSide);
-  function liberty(name,x,z,h) {
-    tower(name,x,z,1.45,h,1.45);
-    for(let i=0;i<4;i++) {
-      const tier=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.63-i*0.11,0.77-i*0.11,0.4,4)),metal);
-      tier.rotation.y=Math.PI/4;tier.position.set(x,h+0.2+i*0.36,z);staticGroup.add(tier);
-      box(name+'CrownLedge',x,h+i*0.36,z,1.12-i*0.16,0.035,1.12-i*0.16,trim,staticGroup);
+  const landmarks = createPhiladelphiaLandmarks(room,root);
+  const streetscape = createPhiladelphiaStreetscape(room,root);
+  const districtMaterials=[0x87929a,0x9c8d7c,0x867877,0x687d8b].map(color=>mat(color,{map:facadeTexture,roughness:.46,metalness:.24,emissive:color,emissiveMap:facadeTexture,emissiveIntensity:.19}));
+  // Mid-rise roofs at three separate distances knit the landmark silhouettes
+  // into a city. Setbacks and returns remain geometry when the camera moves.
+  for(let i=0;i<27;i++) {
+    const x=-19+i*1.7,z=-43-(i%3)*2.1,w=1.12+rng()*.8,h=3.6+rng()*2.9,d=1.25+rng()*.7,m= districtMaterials[i%4];
+    box('PhiladelphiaMidrise',x,h/2,z,w,h,d,m,staticGroup);
+    box('MidriseRecessedPenthouse',x+.08,h+.2,z-.05,w*.62,.4,d*.68,m,staticGroup);
+    box('MidriseStoneCornice',x,h,z,w+.05,.065,d+.06,trim,staticGroup);
+    snowRoofs.push([x,h+.04,z,w,d],[x+.08,h+.42,z-.05,w*.62,d*.68]);
+    for(let f=1;f<h/.32;f++)box('MidriseFloorDepth',x,f*.32,z+d/2+.01,w,.014,.025,trim,staticGroup);
+    for(let c=1;c<6;c++)box('MidriseVerticalPier',x-w/2+c*w/6,h/2,z+d/2+.015,.018,h,.034,trim,staticGroup);
+    for(let f=1;f<h/.32;f++)for(let c=0;c<6;c++)if(rng()>.76){
+      dummy.position.set(x-w/2+(c+.5)*w/6,f*.32-.11,z+d/2+.027);
+      dummy.scale.set(w/6*.6,.11,.008);dummy.rotation.set(0,0,0);dummy.updateMatrix();
+      officeTransforms[(i+f+c)%5].push(dummy.matrix.clone());
     }
-    const peak = new THREE.Mesh(room._geometry(new THREE.ConeGeometry(0.25,0.85,4)),metal);peak.position.set(x,h+1.83,z);peak.rotation.y=Math.PI/4;staticGroup.add(peak);
-    box(name+'Spire',x,h+2.65,z,0.025,1.15,0.025,trim,staticGroup);
   }
-  liberty('OneLibertyPlace',9.1,-35,7.3);liberty('TwoLibertyPlace',11,-34,6.5);
-  tower('ComcastCenter',2.2,-37,1.95,9.3,1.55);
-  box('ComcastCenterCrown',2.2,9.4,-37,2.02,0.7,1.6,trim,staticGroup);
-  box('ComcastCenterNotch',2.2,9.55,-36.18,1.35,0.5,0.06,roof,staticGroup);
-  tower('ComcastTechnologyCenter',-1,-38,1.8,9.8,1.65);
-  box('ComcastTechnologyLantern',-0.37,10.35,-38,0.28,1.8,0.3,officeMaterials[2],staticGroup);
-  tower('FMCInspiredRiverTower',14,-38,1.7,7.8,1.5);
-  for(let i=0;i<13;i++) {
-    const x=-12+i*2.6, h=1.9+rng()*1.1,z=-19-rng()*1.7;
-    const brick=room.brickMaterials[i%room.brickMaterials.length];
-    box('BrickRowhouse',x,h/2,z,2.3,h,2.2,brick,staticGroup);
-    box('RowhouseCornice',x,h,z+0.04,2.42,0.16,2.35,roof,staticGroup);
-    snowRoofs.push([x,h+0.11,z+0.04,2.42,2.35]);
-    box('RowhouseChimney',x+0.55,h+0.32,z,0.3,0.65,0.32,brick,staticGroup);
-    for(let r=0;r<2;r++)for(let c=0;c<3;c++){
-      const wx=x-0.7+c*0.65,wy=0.55+r*0.8;
-      box('WindowRecess',wx,wy,z+1.106,0.38,0.52,0.04,roof,staticGroup);
-      box('WarmApartment',wx,wy,z+1.135,0.27,0.4,0.018,officeMaterials[(i+c)%5],staticGroup);
-      box('StoneLintel',wx,wy+0.29,z+1.13,0.42,0.055,0.11,trim,staticGroup);
-      box('StoneSill',wx,wy-0.27,z+1.15,0.42,0.045,0.14,trim,staticGroup);
-      box('SashDivider',wx,wy,z+1.15,0.29,0.025,0.02,roof,staticGroup);
-    }
+  // Preserve the PECO slab and the crown coordinates exactly; refine the returns.
+  for (const x of [4.44,7.56]) box('PECOCornerCap',x,3.12,-24.226,.032,6.24,.034,trim,staticGroup);
+  for(let f=1;f<29;f++) {
+    box('PECOSideFloorReveal',7.581,f*.216,-25,.025,.018,1.5,trim,staticGroup);
+    box('PECOFrontFloorReveal',6,f*.216,-24.237,3.12,.013,.026,trim,staticGroup);
+  }
+  for(let c=1;c<22;c++) box('PECONarrowCurtainwallRib',4.425+c*3.15/22,3.1,-24.232,.013,6.2,.036,trim,staticGroup);
+  for(let c=1;c<10;c++) box('PECORecessedSideRib',7.582,3.1,-25.75+c*.15,.031,6.2,.013,trim,staticGroup);
+  for(const y of [5.93,6.64]) {
+    box('PECOCrownMetalLip',6,y,-24.19,3.23,.018,.026,trim,staticGroup);
+    box('PECOCrownReturnLip',7.626,y,-25,.02,.018,1.57,trim,staticGroup);
   }
   const roofSnow = new THREE.InstancedMesh(boxGeometry,roofSnowMaterial,snowRoofs.length);
   roofSnow.name='SnowOnPhiladelphiaRoofs';
@@ -111,77 +113,86 @@ export function createLivingPhiladelphia(room) {
     windows.name='SlowlyChangingOfficeLights';officeTransforms[i].forEach((matrix,j)=>windows.setMatrixAt(j,matrix));root.add(windows);
   }
   const trees=[];
-  const foliageTexture=surfaceTexture(room,32,32,(x,y)=>{
-    const px=(x-15.5)/15,py=(y-15.5)/15;
+  const foliageTexture=surfaceTexture(room,128,128,(x,y)=>{
+    const px=(x-63.5)/62,py=(y-63.5)/62;
     const angle=Math.atan2(py,px),radius=Math.hypot(px,py);
-    const edge=0.68+0.18*Math.cos(angle*5+0.5);
+    const edge=0.67+0.22*Math.cos(angle*5+0.5)+.025*Math.cos(angle*39);
     const inside=radius<edge;
-    const vein=Math.abs(px)<0.025 || Math.abs(py-Math.abs(px)*0.7)<0.025;
-    return [vein?210:245,vein?195:245,vein?164:235,inside?255:0];
+    const vein=Math.abs(px)<0.014 || Math.abs(py-Math.abs(px)*0.7)<0.014 || Math.abs(py+.3-Math.abs(px)*.55)<.012;
+    const grain=(Math.sin(x*8.2+y*3.1)*7+Math.sin(x*.21+y*.17)*10);
+    return [vein?203:235+grain,vein?174:228+grain,vein?137:203+grain,inside?255:0];
   });
-  const foliageGeometry=room._geometry(new THREE.PlaneGeometry(1,1));
-  const leafMaterials=[0x69734c,0xa38645,0x976544,0x7e804f].map(color=>mat(color,{map:foliageTexture,alphaTest:0.45,side:THREE.DoubleSide,roughness:0.95}));
-  for(const [x,z,h] of [[-0.6,-10.8,5.5],[9.3,-12.1,5.9],[-4,-16,4.7],[13,-17,4.5]]) {
+  const foliageGeometry=room._geometry(new THREE.PlaneGeometry(1,1,2,2));
+  const leafPositions=foliageGeometry.attributes.position;
+  for(let i=0;i<leafPositions.count;i++)leafPositions.setZ(i,Math.pow(leafPositions.getX(i),2)*.23+Math.sin(leafPositions.getY(i)*3)*.04);
+  foliageGeometry.computeVertexNormals();
+  const foliageTime={value:0},foliageWind={value:.2};
+  const leafMaterials=[0x9b833c,0xc98d36,0xae592c,0x747549].map(color=>{
+    const material=mat(color,{map:foliageTexture,alphaTest:0.45,side:THREE.DoubleSide,roughness:0.87,emissive:color,emissiveIntensity:.12});
+    material.onBeforeCompile=shader=>{
+      shader.uniforms.foliageTime=foliageTime;shader.uniforms.foliageWind=foliageWind;
+      shader.vertexShader='uniform float foliageTime; uniform float foliageWind;\n'+shader.vertexShader;
+      shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
+        float leafPhase=instanceMatrix[3].x*7.1+instanceMatrix[3].y*4.3+instanceMatrix[3].z*3.9;
+        transformed.z+=sin(foliageTime*2.1+leafPhase)*foliageWind*.16*(position.y+.5);
+        transformed.x+=sin(foliageTime*1.6+leafPhase*.7)*foliageWind*.06*(position.y+.5);`);
+    };
+    material.customProgramCacheKey=()=> 'octoberline-leaf-flutter-v2';
+    return material;
+  });
+  for(const [x,z,h] of [[-3.2,-10.8,5.5],[10.7,-12.1,5.9],[-5.4,-16,4.7],[14,-17,4.5]]) {
     const tree=new THREE.Group();tree.name='WindDrivenStreetTree';tree.position.set(x,-0.12,z);root.add(tree);
-    const trunk=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.045,0.13,h*0.76,9)),bark);trunk.position.y=h*0.38;trunk.rotation.z=0.025;tree.add(trunk);
+    const trunk=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.045,0.13,h*0.76,16,5)),bark);trunk.position.y=h*0.38;trunk.rotation.z=0.025;tree.add(trunk);
     const branches=[];
     for(let b=0;b<5;b++) {
       const branch=new THREE.Group();branch.position.y=h*(0.42+b*0.07);tree.add(branch);branches.push(branch);
       const angle=b*2.4;
-      const stem=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.02,0.055,h*0.33,5)),bark);stem.position.set(Math.sin(angle)*0.3,h*0.1,Math.cos(angle)*0.25);stem.rotation.z=Math.sin(angle)*0.65;branch.add(stem);
+      const stem=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.02,0.055,h*0.33,10)),bark);stem.position.set(Math.sin(angle)*0.3,h*0.1,Math.cos(angle)*0.25);stem.rotation.z=Math.sin(angle)*0.65;branch.add(stem);
       for(let t=0;t<5;t++){
         const twig=new THREE.Mesh(room._geometry(new THREE.CylinderGeometry(0.006,0.017,0.8,4)),bark);
         twig.position.set(Math.sin(angle)*0.4+(t-2)*0.14,h*0.15+t*0.04,Math.cos(angle)*0.3);
         twig.rotation.set(Math.cos(t)*0.6,angle,Math.sin(t+angle)*0.8);branch.add(twig);
       }
       // Instancing gives a volumetric irregular crown without hundreds of draws.
-      const foliage=new THREE.InstancedMesh(foliageGeometry,leafMaterials[b%4],160);
+      const foliage=new THREE.InstancedMesh(foliageGeometry,leafMaterials[(b+trees.length)%4],360);
       foliage.name='DimensionalAutumnFoliage';
-      for(let f=0;f<160;f++) {dummy.position.set(Math.sin(angle)*0.55+(rng()-0.5)*1.8,h*0.18+(rng()-0.5)*1.5,Math.cos(angle)*0.4+(rng()-0.5)*1.65);dummy.scale.set(0.16+rng()*0.15,0.19+rng()*0.17,1);dummy.rotation.set(rng()*3,rng()*3,rng()*3);dummy.updateMatrix();foliage.setMatrixAt(f,dummy.matrix);}
+      for(let f=0;f<360;f++) {
+        const theta=rng()*Math.PI*2,v=rng()*2-1,radius=Math.cbrt(rng()),ring=Math.sqrt(1-v*v)*radius;
+        dummy.position.set(Math.sin(angle)*.64+Math.cos(theta)*ring*1.04,h*.18+v*radius*.95,Math.cos(angle)*.58+Math.sin(theta)*ring*.95);
+        dummy.scale.set(.13+rng()*.16,.17+rng()*.19,1);dummy.rotation.set(rng()*3,rng()*3,rng()*3);dummy.updateMatrix();foliage.setMatrixAt(f,dummy.matrix);
+        foliage.setColorAt(f,new THREE.Color().setHSL(.07+rng()*.05,.32+rng()*.3,.66+rng()*.22));
+      }
       branch.add(foliage);
       room._batchStaticMeshes(branch,'TreeTwigs');
     }
     trees.push({tree,branches});
   }
-  const count=150, leafGeometry=room._geometry(new THREE.CircleGeometry(0.055,5));
-  const leafMaterial=mat(0xc59346,{side:THREE.DoubleSide});
+  const count=150, leafGeometry=room._geometry(foliageGeometry.clone());
+  leafGeometry.scale(.12,.12,.12);
+  const leafMaterial=mat(0xc59346,{map:foliageTexture,alphaTest:.45,side:THREE.DoubleSide,emissive:0x9c6326,emissiveIntensity:.15});
   const leaves=new THREE.InstancedMesh(leafGeometry,leafMaterial,count);leaves.name='FallingAndSettledAutumnLeaves';leaves.frustumCulled=false;root.add(leaves);
   const leafData=Array.from({length:count},(_,i)=>({x:-1+rng()*12,y:i<115?-0.12:2+rng()*4,z:-10.8-rng()*1.4,phase:rng()*6.28,rest:i<115?20+rng()*80:0,scale:0.7+rng()*0.9}));
   leafData.forEach((l,i)=>leaves.setColorAt(i,new THREE.Color([0xa25f2f,0xc89342,0x987044][i%3])));
   const actors=[];
-  const tireMaterial=mat(0x242526);
-  const wheelGeometry=room._geometry(new THREE.CylinderGeometry(0.115,0.115,0.08,10));
-  for(let i=0;i<4;i++) {
-    const car=new THREE.Group();car.name='PassingStreetCar';root.add(car);
-    box('CarBody',0,0.25,0,0.95,0.35,0.48,mat([0x444e59,0x806047,0x5d6259,0xada595][i]),car);
-    box('CarCabin',0,0.47,0,0.48,0.2,0.41,metal,car);
-    for(const x of [-0.3,0.3]) for(const z of [-0.24,0.24]) {
-      const wheel=new THREE.Mesh(wheelGeometry,tireMaterial);
-      wheel.name='StreetCarWheel';wheel.rotation.x=Math.PI/2;wheel.position.set(x,0.115,z);car.add(wheel);
-    }
-    const lamp=room._material(new THREE.MeshBasicMaterial({color:0xffdf9b}));
-    for(const z of [-0.16,0.16])box('MovingHeadlight',0.49,0.24,z,0.025,0.08,0.08,lamp,car);
-    const beam=new THREE.Mesh(room._geometry(new THREE.PlaneGeometry(2,0.5)),room._material(new THREE.MeshBasicMaterial({color:0xeacb87,transparent:true,opacity:0.07,depthWrite:false})));
-    beam.rotation.x=-Math.PI/2;beam.position.set(1.1,0.012,0);car.add(beam);
-    room._batchStaticMeshes(car,'StreetCar');
-    actors.push({object:car,phase:i*8,speed:0.45+i*0.05,z:-14-i%2*0.8,groundY:-0.32});
-  }
-  for(let i=0;i<5;i++) {
-    const walker=new THREE.Group();walker.name='DistantPedestrian';root.add(walker);
-    box('Coat',0,0.34,0,0.105,0.27,0.09,roof,walker);
-    for(const side of [-1,1]) {
-      const leg=box('TrouserLeg',side*0.035,0.115,0,0.036,0.23,0.045,roof,walker);
-      leg.rotation.z=side*0.1;
-      box('WalkingShoe',side*0.035,0.018,0.01,0.05,0.035,0.075,roof,walker);
-    }
-    const head=new THREE.Mesh(sphereGeometry,trim);head.scale.setScalar(0.065);head.position.y=0.53;walker.add(head);
-    room._batchStaticMeshes(walker,'Pedestrian');
-    actors.push({object:walker,phase:i*6,speed:0.065+i*0.012,z:-11.4,groundY:-0.18});
-  }
   room._batchStaticMeshes(staticGroup,'LivingCity');
+  const reflectedSky=surfaceTexture(room,512,256,(x,y)=>{
+    const elevation=1-y/256,azimuth=x/512*Math.PI*2;
+    const sun=Math.pow(Math.max(0,Math.cos(azimuth-1.1)),18)*Math.exp(-Math.pow((elevation-.55)*9,2));
+    const height=Math.max(0,Math.min(1,(elevation-.46)*2));
+    const skyline=elevation<.48+.03*Math.sin(x*.11)+.015*Math.sin(x*.4);
+    const r=skyline?28:105+50*(1-height)+sun*95;
+    const g=skyline?32:127+15*(1-height)+sun*55;
+    const b=skyline?35:163-35*(1-height)+sun*18;
+    return [Math.min(255,r),Math.min(255,g),Math.min(255,b),255];
+  });
+  reflectedSky.mapping=THREE.EquirectangularReflectionMapping;
+  root.traverse(object=>{if(object.isMesh && object.material?.isMeshStandardMaterial){object.material.envMap=reflectedSky;object.material.envMapIntensity=.65;}});
   let lastLightTick=-1;
   function update(time,delta,weather,reduced=false) {
     const wind=philadelphiaWind(time,weather.wind);
+    landmarks.update(time,reduced);
+    foliageTime.value=reduced?foliageTime.value:time;
+    foliageWind.value=wind;
     trees.forEach(({tree,branches},i)=>{tree.rotation.z=wind*0.013*Math.sin(time*0.7+i);branches.forEach((branch,b)=>{branch.rotation.z=wind*0.045*Math.sin(time*1.1+i+b);branch.rotation.x=wind*0.028*Math.sin(time*1.8+b);});});
     leafData.forEach((l,i)=>{
       if(!reduced && delta>0) {
@@ -195,7 +206,7 @@ export function createLivingPhiladelphia(room) {
           }
           if(l.rest<0 && wind>0.12) {
             l.visibility=Math.max(0,(l.visibility??1)-delta*0.65);
-            if(l.visibility===0) {l.y=3+rng()*2.5;l.x=i%2===0?-0.4:9;l.z=-10.8-rng()*1.2;l.rest=30+rng()*65;}
+            if(l.visibility===0) {l.y=3+rng()*2.5;l.x=i%2===0?-3.2:10.7;l.z=-10.8-rng()*1.2;l.rest=30+rng()*65;}
           }
         }
         else {
@@ -212,11 +223,12 @@ export function createLivingPhiladelphia(room) {
     applyWeather(weather);
   }
   function applyWeather(weather) {
+    streetscape.applyWeather?.(weather);
     street.roughness=0.86-weather.rain*0.55;
     street.color.setHex(weather.snow>0.5?0x858c8e:weather.rain>0.3?0x242c30:0x343a3b);
     pavement.color.setHex(weather.snow>0.5?0xb4b6b0:0x73706a);
     roofSnowMaterial.opacity=weather.snow*0.82;
   }
   update(0,0,room.weatherState,true);
-  return {root,crownFront,crownSide,leaves,leafData,trees,actors,update,applyWeather};
+  return {root,crownFront,crownSide,landmarks,streetscape,leaves,leafData,trees,actors,update,applyWeather};
 }

@@ -225,6 +225,88 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(vistaTextureDispose).toHaveBeenCalledTimes(1);
     expect(backdropMaterialDispose).toHaveBeenCalledTimes(1);
   }, 15_000);
+  it('locks both PECO display faces while rebuilding the surrounding skyline', () => {
+    const room = new PhiladelphiaWritingRoom({scene:new THREE.Scene(),quality:'low',weather:'quiet'});
+    try {
+      const {crownFront,crownSide,landmarks}=room.livingCity;
+      expect(crownFront.position.toArray()).toEqual([6,6.3,-24.2]);
+      expect(crownFront.geometry.parameters).toMatchObject({width:3.18,height:.61});
+      expect(crownSide.position.toArray()).toEqual([7.62,6.3,-25]);
+      expect(crownSide.geometry.parameters).toMatchObject({width:1.55,height:.61});
+      expect(crownSide.rotation.y).toBeCloseTo(Math.PI/2);
+      expect(crownFront.material.map.image).toBe(room.backdrop.texture.image);
+      expect(crownSide.material.map.image).toBe(room.backdrop.texture.image);
+      const names=landmarks.architecture.map(a=>a.name);
+      expect(new Set(names)).toEqual(new Set(['OneLibertyPlace','TwoLibertyPlace','ComcastCenter','ComcastTechnologyCenter','BNYMellonCenter','ThreeLoganSquare','FMCTower','CiraCentre']));
+      const lookup=name=>landmarks.architecture.find(a=>a.name===name);
+      expect(lookup('ComcastTechnologyCenter').height).toBeGreaterThan(lookup('ComcastCenter').height);
+      expect(lookup('OneLibertyPlace').height).toBeGreaterThan(lookup('TwoLibertyPlace').height);
+      // The new landmarks occupy a real depth range behind the near PECO anchor.
+      expect(lookup('CiraCentre').z).toBeGreaterThan(-25);
+      expect(lookup('OneLibertyPlace').z).toBeLessThan(lookup('CiraCentre').z-5);
+      for(const tier of ['medium','high','low']) {
+        room.setQuality(tier);room.update(.05,12);
+        expect(crownFront.position.toArray()).toEqual([6,6.3,-24.2]);
+        expect(crownSide.position.toArray()).toEqual([7.62,6.3,-25]);
+        expect(landmarks.root.visible).toBe(true);
+      }
+    } finally {room.dispose();}
+  },15000);
+
+  it('places Cira light panels on inclined side faces and freezes their shader clock when motion stops', () => {
+    const room = new PhiladelphiaWritingRoom({scene:new THREE.Scene(),quality:'low',weather:'quiet'});
+    try {
+      const {landmarks}=room.livingCity;
+      const {ciraLEDs,officeLights}=landmarks;
+      const matrix=new THREE.Matrix4(), normal=new THREE.Vector3();const normals=new Set();
+      for(let i=0;i<ciraLEDs.count;i++){
+        ciraLEDs.getMatrixAt(i,matrix);
+        normal.set(0,0,1).transformDirection(matrix);
+        normals.add(normal.toArray().map(v=>v.toFixed(2)).join(','));
+        expect(matrix.elements.every(Number.isFinite)).toBe(true);
+      }
+      // This rejects a flat billboard: front + beveled corner + side have
+      // substantially different outward normals, including sloping facade Y.
+      expect(normals.size).toBeGreaterThanOrEqual(3);
+      expect([...normals].some(n=>Math.abs(Number(n.split(',')[0]))>.5)).toBe(true);
+      expect([...normals].some(n=>Math.abs(Number(n.split(',')[1]))>.005)).toBe(true);
+      const seeds=officeLights.geometry.getAttribute('aSeed').array;
+      expect(Math.max(...seeds)-Math.min(...seeds)).toBeGreaterThan(.3);
+      const initial=ciraLEDs.material.uniforms.uTime.value;
+      room.update(.05,15);
+      expect(ciraLEDs.material.uniforms.uTime.value).toBeGreaterThan(initial);
+      expect(officeLights.material.uniforms.uTime).toBe(ciraLEDs.material.uniforms.uTime);
+      room.setReducedMotion(true);
+      const frozen=ciraLEDs.material.uniforms.uTime.value;
+      room.update(.075,60);
+      expect(ciraLEDs.material.uniforms.uTime.value).toBe(frozen);
+      room.setReducedMotion(false);room.update(.05,61);
+      expect(ciraLEDs.material.uniforms.uTime.value).toBeGreaterThan(frozen);
+    } finally {room.dispose();}
+  },15000);
+
+  it('replaces block traffic with a volumetric detailed masonry streetscape', () => {
+    const room=new PhiladelphiaWritingRoom({scene:new THREE.Scene(),quality:'low',weather:'quiet'});
+    try {
+      expect(room.livingCity.root.getObjectByName('PassingStreetCar')).toBeUndefined();
+      expect(room.livingCity.actors.every(({object})=>object.name!=='PassingStreetCar')).toBe(true);
+      const {group}=room.livingCity.streetscape;
+      const bounds=new THREE.Box3().setFromObject(group);const size=bounds.getSize(new THREE.Vector3());
+      expect(size.x).toBeGreaterThan(20);expect(size.y).toBeGreaterThan(3);expect(size.z).toBeGreaterThan(2);
+      // Check rendered geometry after batching, rather than semantic name markers.
+      let vertices=0;const heights=new Set(),depths=new Set();
+      group.traverse(object=>{
+        if(!object.isMesh)return;
+        const position=object.geometry.getAttribute('position');vertices+=position.count;
+        for(let i=0;i<position.count;i++){heights.add(position.getY(i).toFixed(2));depths.add(position.getZ(i).toFixed(2));}
+      });
+      expect(vertices).toBeGreaterThan(10000);
+      expect(heights.size).toBeGreaterThan(30);expect(depths.size).toBeGreaterThan(30);
+      expect(Number.isFinite(bounds.min.x+ bounds.max.z)).toBe(true);
+      expect(room.livingCity.leaves.count).toBe(150);
+    } finally {room.dispose();}
+  },15000);
+
   it('lands airborne leaves on the sidewalk and bounds their lifetime and count', () => {
     const room = new PhiladelphiaWritingRoom({scene: new THREE.Scene(),weather:'autumn-wind',quality:'low'});
     const leaf = room.livingCity.leafData[149]; leaf.y = 0.001; leaf.rest = 100;

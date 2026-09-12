@@ -637,15 +637,30 @@ export class PhiladelphiaWritingRoom {
         uniform vec3 horizonColor;
         uniform float cloud;
         uniform float cloudDrift;
+        float noise2(vec2 p) {
+          vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
+          float a=fract(sin(dot(i,vec2(127.1,311.7)))*43758.5453);
+          float b=fract(sin(dot(i+vec2(1,0),vec2(127.1,311.7)))*43758.5453);
+          float c=fract(sin(dot(i+vec2(0,1),vec2(127.1,311.7)))*43758.5453);
+          float d=fract(sin(dot(i+vec2(1,1),vec2(127.1,311.7)))*43758.5453);
+          return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+        }
+        float cloudField(vec2 p) {
+          float n=0.0,weight=.53;
+          for(int i=0;i<5;i++){n+=noise2(p)*weight;p=p*2.03+vec2(5.7,1.3);weight*=.48;}
+          return n;
+        }
         void main() {
-          float lift = smoothstep(0.02, 0.88, vUv.y);
+          float lift = smoothstep(0.25, 0.57, vUv.y);
           vec3 color = mix(horizonColor, topColor, lift);
-          float cloudA = sin((vUv.x + cloudDrift) * 8.2 + vUv.y * 3.4);
-          float cloudB = sin((vUv.x - cloudDrift * 0.63) * 15.7 - vUv.y * 5.1);
-          float cloudC = sin((vUv.x + cloudDrift * 0.31) * 29.0 + vUv.y * 9.0);
-          float veil = cloud * smoothstep(0.18, 1.55, cloudA * 0.68 + cloudB * 0.24 + cloudC * 0.08 + 0.55);
-          vec3 cloudColor = mix(vec3(0.34, 0.39, 0.43), horizonColor, 0.14);
-          gl_FragColor = vec4(mix(color, cloudColor, veil * 0.22), 1.0);
+          vec2 p=vec2(vUv.x*14.0+cloudDrift*.22,vUv.y*39.0-cloudDrift*.04);
+          float n=cloudField(p);
+          float veil=smoothstep(.42,.67,n)*(0.3+cloud*.7);
+          float edge=smoothstep(.39,.48,n)-smoothstep(.49,.59,n);
+          vec3 cloudColor=mix(topColor*.69,horizonColor*.77,1.0-lift);
+          color=mix(color,cloudColor,veil*.7);
+          color+=horizonColor*edge*.11*(1.0-lift);
+          gl_FragColor = vec4(color, 1.0);
         }
       `,
       depthWrite: false,
@@ -1440,7 +1455,7 @@ export class PhiladelphiaWritingRoom {
     this.exterior.visible = false;
     if (!this.realSky) {
       this.realSky = new THREE.Mesh(this._geometry(new THREE.PlaneGeometry(120,65)),this.skyMaterial);
-      this.realSky.position.set(4,15,-45); this.realSky.name = 'DimensionalCitySky'; this.root.add(this.realSky);
+      this.realSky.position.set(4,15,-60); this.realSky.name = 'DimensionalCitySky'; this.root.add(this.realSky);
     }
     this.weatherGroup.position.z = -1.4;
     this.precipitationGroup.position.z = 0;
