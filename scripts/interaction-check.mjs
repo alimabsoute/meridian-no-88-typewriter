@@ -174,8 +174,28 @@ async function advancePaperMotions(page, { rounds = 4, stepsPerRound = 24 } = {}
 }
 
 async function waitForSimulator(page) {
-  await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
+  const startupErrors = [];
+  const onConsole = (message) => {
+    if (message.type() === 'error') startupErrors.push(message.text());
+  };
+  const onPageError = (error) => startupErrors.push(error.message);
+  page.on('console', onConsole);
+  page.on('pageerror', onPageError);
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
+  } catch (error) {
+    // WebGL fallback errors and module failures are otherwise lost behind a
+    // generic readiness timeout. Avoid another renderer-dependent evaluation.
+    throw new Error(`Simulator startup failed: ${JSON.stringify({
+      url: page.url(),
+      viewport: page.viewportSize(),
+      startupErrors: startupErrors.slice(-8),
+    })}`, { cause: error });
+  } finally {
+    page.off('console', onConsole);
+    page.off('pageerror', onPageError);
+  }
 }
 
 async function openDocumentTray(page) {
@@ -360,6 +380,19 @@ if (
 // Verify that representative host keys animate the intended modeled key in
 // every character row. This uses a separate sheet so the release workflow
 // below keeps its established text and page numbering.
+// Keep that original sheet alive, but remove its rasterization workload while
+// the keyboard and reduced-motion contexts run. Background throttling is
+// disabled in this harness, so an unattended full scene still competes for
+// SwiftShader time and can prevent the next context from initializing.
+const backgroundViewport = page.viewportSize();
+if (!backgroundViewport) throw new Error('The original sheet page has no viewport');
+const backgroundSceneWasVisible = await page.evaluate(() => {
+  const { scene } = window.__OCTOBERLINE_211__.model;
+  const visible = scene.visible;
+  scene.visible = false;
+  return visible;
+});
+await page.setViewportSize(ISOLATED_RENDER_SIZE);
 const keyboardContext = await browser.newContext({ viewport: { width: 960, height: 640 } });
 await keyboardContext.addInitScript(deterministicRandom);
 const keyboardPage = await keyboardContext.newPage();
@@ -562,6 +595,10 @@ try {
   await reducedContext.close();
 }
 
+await page.setViewportSize(backgroundViewport);
+await page.evaluate((visible) => {
+  window.__OCTOBERLINE_211__.model.scene.visible = visible;
+}, backgroundSceneWasVisible);
 await page.bringToFront();
 const averageFrameMs = await page.evaluate(() => new Promise((resolve) => {
   let frames = 0;
