@@ -135,6 +135,10 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowQuality ? 1 : 1.75))
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.shadowMap.enabled = !lowQuality;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// The landing's shell and paper are stationary; camera motion does not change
+// their light-space shadows. Draw once, then resume live shadows on entry.
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.22;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -154,7 +158,8 @@ reflectionGenerator.dispose();
 
 const compactLandingCamera = window.innerWidth <= 900;
 const camera = new THREE.PerspectiveCamera(compactLandingCamera ? 50 : 37, window.innerWidth / window.innerHeight, 0.05, 80);
-camera.position.set(4.2, 5.8, 13.2);
+const animatedArrival = !window.matchMedia('(prefers-reduced-motion: reduce)').matches && stored?.atmospherePaused !== true;
+camera.position.set(...(animatedArrival ? [5.05, 6.12, 14.6] : [4.2, 5.8, 13.2]));
 
 const controls = new OrbitControls(camera, canvas);
 canvas.style.cursor = 'default';
@@ -1285,6 +1290,7 @@ const landingPointerSmoothed = new THREE.Vector2();
 let landingElapsed = 0;
 let landingLastFrame = null;
 let landingPreviewBeat = -1;
+let landingReady = false;
 
 refs['intro-overlay'].addEventListener('pointermove', (event) => {
   if (event.pointerType === 'touch') return;
@@ -1293,6 +1299,7 @@ refs['intro-overlay'].addEventListener('pointermove', (event) => {
 refs['intro-overlay'].addEventListener('pointerleave', () => landingPointer.set(0, 0));
 
 function updateLandingArrival(now, delta) {
+  if (!landingReady) return;
   if (refs['intro-overlay'].classList.contains('dismissed') || cameraMotion) return;
   const reduced = reducedMotionQuery.matches;
   if (reduced || atmospherePaused || refs['field-guide'].open) {
@@ -1337,6 +1344,8 @@ enterStudioButton.addEventListener('click', () => {
   if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
   setCameraView('front', 1.25);
   refs['intro-overlay'].classList.add('dismissed');
+  renderer.shadowMap.autoUpdate = true;
+  renderer.shadowMap.needsUpdate = true;
   refs['intro-overlay'].setAttribute('aria-hidden', 'true');
   refs['intro-overlay'].inert = true;
   app.classList.remove('landing-active');
@@ -2176,6 +2185,11 @@ function animate(now) {
   controls.update();
   updateLiveUi(delta);
   renderer.render(scene, camera);
+  if (!landingReady) {
+    landingReady = true;
+    refs['intro-overlay'].classList.add('scene-ready');
+    landingLastFrame = performance.now();
+  }
 
   frameAccumulator += delta;
   frameCount += 1;

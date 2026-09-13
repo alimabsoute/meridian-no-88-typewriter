@@ -1393,12 +1393,16 @@ export class PhiladelphiaWritingRoom {
       staticFrame,
       staticText: ' ',
     });
-    for (const texture of [this.backdrop.texture, this.exteriorVistaTexture]) {
+    // The real crown faces share the backdrop's pixel buffer, but updateRanges
+    // belong to each Texture, not its shared Source. Mark each UV-cropped view
+    // explicitly so scrolling does not upload the entire skyline at 15 Hz.
+    for (const texture of [
+      this.backdrop.texture,
+      this.exteriorVistaTexture,
+      this.livingCity?.crownFront.material.map,
+      this.livingCity?.crownSide.material.map,
+    ]) {
       if (texture) markTextureRegionForUpload(texture, this.pecoCrownRegion, { fullTextureUpload });
-    }
-    if (this.livingCity) {
-      this.livingCity.crownFront.material.map.needsUpdate = true;
-      this.livingCity.crownSide.material.map.needsUpdate = true;
     }
     this.pecoCrownState.frame += 1;
     this.pecoCrownState.lastTick = tick;

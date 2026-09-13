@@ -92,9 +92,10 @@ textarea:focus-visible {
 
 .film-grain {
   position: fixed;
-  inset: -50%;
+  inset: -5%;
   z-index: 2;
   opacity: 0.035;
+  background-size: 200vw 200vh;
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
   animation: grain 0.22s steps(2) infinite;
@@ -1912,7 +1913,11 @@ textarea:focus-visible {
 
 /* The opening is a live room: ink arrives, the carriage glints, the city breathes. */
 .intro-title-line { display: block; white-space: nowrap; }
-.intro-word { display: inline-block; animation: intro-ink-arrive 360ms steps(3, end) both; }
+.intro-word { display: inline-block; animation: intro-ink-arrive 650ms cubic-bezier(.22,1,.36,1) both; }
+.intro-overlay:not(.scene-ready) .intro-word,
+.intro-overlay:not(.scene-ready) .intro-index,
+.intro-overlay:not(.scene-ready) .intro-content p,
+.intro-overlay:not(.scene-ready) .intro-carriage-rule i { animation-play-state: paused; }
 .intro-title-line:first-child .intro-word:first-child { animation-delay: 180ms; }
 .intro-title-line:first-child .intro-word:last-child { animation-delay: 370ms; }
 .intro-title-line:last-child .intro-word:first-child { animation-delay: 630ms; }

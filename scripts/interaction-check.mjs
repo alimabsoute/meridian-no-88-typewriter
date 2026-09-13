@@ -936,6 +936,16 @@ await mobilePage.waitForFunction(() => {
   return element && getComputedStyle(element).display !== 'none' && element.getBoundingClientRect().height > 0;
 });
 await mobilePage.focus('#mobile-input');
+const mobileInputReady = await mobilePage.evaluate(() => ({
+  focused: document.activeElement?.id,
+  captured: window.__OCTOBERLINE_211__.keyboardCaptured,
+  inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
+  introDismissed: document.querySelector('#intro-overlay').classList.contains('dismissed'),
+}));
+if (mobileInputReady.focused !== 'mobile-input' || !mobileInputReady.captured
+  || !mobileInputReady.inserted || !mobileInputReady.introDismissed) {
+  throw new Error(`Mobile input was not ready: ${JSON.stringify(mobileInputReady)}`);
+}
 await mobilePage.evaluate(() => {
   document.querySelector('#mobile-input').dispatchEvent(new InputEvent('beforeinput', {
     bubbles: true,
@@ -944,6 +954,11 @@ await mobilePage.evaluate(() => {
     data: 'Hi',
   }));
 });
+// Verify beforeinput delivery through the real queue, then drain its mechanical
+// motion exactly as the desktop correspondence checks do. On SwiftShader, two
+// impacts can otherwise outlast this smoke check's wall-clock deadline even
+// though the input was accepted. Real-time typing has a separate cadence gate.
+await settleKeyboardModel(mobilePage, ['KeyH', 'KeyI']);
 await mobilePage.waitForFunction(() => window.__OCTOBERLINE_211__.document.marks.length === 2, null, { timeout: 10000 });
 const mobileText = await mobilePage.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
 if (mobileText !== 'Hi') throw new Error(`Mobile input mismatch: ${JSON.stringify(mobileText)}`);

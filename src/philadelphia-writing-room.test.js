@@ -203,6 +203,26 @@ describe('PhiladelphiaWritingRoom', () => {
     expect(room.backdrop.texture.version).toBeGreaterThan(backdropVersion);
     expect(room.backdrop.texture.updateRanges).toHaveLength(crownBox.height);
     expect(room.exteriorVistaTexture.updateRanges).toHaveLength(crownBox.height);
+    for (const face of [room.livingCity.crownFront, room.livingCity.crownSide]) {
+      const texture = face.material.map;
+      expect(texture.image).toBe(room.backdrop.texture.image);
+      expect(texture.updateRanges).toEqual(room.backdrop.texture.updateRanges);
+      const uploadComponents = texture.updateRanges.reduce((sum, range) => sum + range.count, 0);
+      expect(uploadComponents).toBe(crownBox.width * crownBox.height * 4);
+      expect(uploadComponents).toBeLessThan(texture.image.data.length / 10);
+    }
+
+    // A weather repaint changes pixels outside the crown and still needs a full
+    // upload. The next scrolling tick must return every face to partial uploads.
+    room._renderPecoCrown(8.2, { force: true, fullTextureUpload: true });
+    expect(room.livingCity.crownFront.material.map.updateRanges).toHaveLength(0);
+    expect(room.livingCity.crownSide.material.map.updateRanges).toHaveLength(0);
+    room._renderPecoCrown(8.2, { force: true });
+    expect(room.livingCity.crownFront.material.map.updateRanges).toHaveLength(crownBox.height);
+    expect(room.livingCity.crownSide.material.map.updateRanges).toHaveLength(crownBox.height);
+    // Forced upload-path checks do not change the scrolling position, but do
+    // increment the frame counter used by the following quality assertion.
+    advanced.frame = room.getState().pecoCrown.frame;
 
     room.setQuality('high');
     expect(room.getState().pecoCrown).toEqual(advanced);
