@@ -1280,6 +1280,45 @@ for (const [id, channel] of [['room-volume', 'room'], ['weather-volume', 'weathe
 }
 
 const enterStudioButton = document.getElementById('enter-studio');
+const landingPointer = new THREE.Vector2();
+const landingPointerSmoothed = new THREE.Vector2();
+let landingElapsed = 0;
+let landingLastFrame = null;
+let landingPreviewBeat = -1;
+
+refs['intro-overlay'].addEventListener('pointermove', (event) => {
+  if (event.pointerType === 'touch') return;
+  landingPointer.set((event.clientX / window.innerWidth - .5) * 2, (.5 - event.clientY / window.innerHeight) * 2);
+});
+refs['intro-overlay'].addEventListener('pointerleave', () => landingPointer.set(0, 0));
+
+function updateLandingArrival(now, delta) {
+  if (refs['intro-overlay'].classList.contains('dismissed') || cameraMotion) return;
+  const reduced = reducedMotionQuery.matches;
+  if (reduced || atmospherePaused || refs['field-guide'].open) {
+    landingLastFrame = now;
+    return;
+  }
+  if (landingLastFrame !== null) landingElapsed += Math.min(.1, (now - landingLastFrame) / 1000);
+  landingLastFrame = now;
+  const compact = window.innerWidth <= 900;
+  const progress = Math.min(1, landingElapsed / 5.5);
+  const arrival = 1 - (1 - progress) ** 3;
+  landingPointerSmoothed.lerp(landingPointer, 1 - Math.exp(-delta * 3));
+  const drift = Math.sin(landingElapsed * .23) * .055 * arrival;
+  camera.position.set(4.2 + (1 - arrival) * .85 + (compact ? 0 : landingPointerSmoothed.x * .13) + drift,
+    5.8 + (1 - arrival) * .32 + (compact ? 0 : landingPointerSmoothed.y * .055),
+    13.2 + (1 - arrival) * 1.4);
+  controls.target.set(...(compact ? [2.8, 2.8, -1.5] : [.7, 2.6, -.1]));
+  camera.fov = compact ? 50 : 37;
+  camera.updateProjectionMatrix();
+  // Preview key travel only: never enqueue a character or modify a manuscript.
+  const beat = Math.floor(landingElapsed / 9);
+  if (landingElapsed > 1.15 && beat !== landingPreviewBeat) {
+    model.animateKey(beat % 2 ? 'KeyL' : 'KeyO', .32, .82);
+    landingPreviewBeat = beat;
+  }
+}
 
 function previewEntryKey() {
   if (reducedMotionQuery.matches || refs['intro-overlay'].classList.contains('dismissed')) return;
@@ -2133,6 +2172,7 @@ function animate(now) {
   // Camera easing follows wall time even when rendering is under load. The
   // mechanical and paper integrators keep their bounded simulation steps.
   updateCameraMotion(elapsedDelta);
+  updateLandingArrival(now, delta);
   controls.update();
   updateLiveUi(delta);
   renderer.render(scene, camera);

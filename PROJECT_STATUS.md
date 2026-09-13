@@ -1,6 +1,6 @@
 # Project status
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-09-13
 
 ## Active development
 
@@ -14,8 +14,8 @@ Last reviewed: 2026-08-30
 - GitHub: the Phase 0-5 release and Vercel configuration are promoted to `main`
 - Legacy infrastructure: the GitHub repository and Pages address still use
   `meridian-no-88-typewriter`; the Vercel address is the canonical live build
-- Custom domain: `octoberline211.com` was available at the 2026-08-30 check;
-  purchase and registration-contact confirmation are still pending
+- Custom domain: `https://octoberline211.com/` is registered and resolves to the existing Vercel production project, verified September 13.
+- September 13 candidate: living skyline, compact workbench, paper improvements, stronger mechanical audio and cinematic landing. Publication is being finalized; exact deployment evidence is maintained in the dated Obsidian checkpoint.
 
 The durable phase board and acceptance criteria live in [docs/ROADMAP.md](docs/ROADMAP.md).
 

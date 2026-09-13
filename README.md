@@ -2,21 +2,25 @@
 
 An enthusiast-grade, browser-based simulation of a late-1930s manual typewriter at a stationary Philadelphia rowhouse desk. A physical keyboard drives the modeled keys, levers, typebars, ribbon, ink impression, escapement, carriage, platen, and paper.
 
-[Open Octoberline 211](https://octoberline-211.vercel.app/) · [Roadmap](docs/ROADMAP.md) · [Release history](https://github.com/alimabsoute/meridian-no-88-typewriter/releases)
+[Open Octoberline 211](https://octoberline211.com/) · [Roadmap](docs/ROADMAP.md) · [Release history](https://github.com/alimabsoute/meridian-no-88-typewriter/releases)
 
 ![Octoberline 211 with a typed sheet](media/octoberline-211-preview.png)
 
-## Current status
+## September 2026 update
+
+The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact; the landing adds a cinematic camera arrival, pointer response, and staged typography. See [release evidence](docs/releases/2026-09-13/) and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
+
+## Earlier release status
 
 The package version remains `0.2.0` while the next release is prepared on
 `codex/octoberline-phases-0-5`. Phases 0–5 and the honest Phase 6–7 previews are
 implemented, release-verified, and published from `main`. The approved Carbon
 Mark and Quiet Desk at Dusk homepage now form the live entry experience at
-[octoberline-211.vercel.app](https://octoberline-211.vercel.app/).
+[octoberline211.com](https://octoberline211.com/).
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the evidence boundary and [the roadmap](docs/ROADMAP.md) for active and deferred work.
 
-> **Hosting name:** the product and Vercel project are Octoberline 211. The existing GitHub repository and Pages endpoint still use the legacy `meridian-no-88-typewriter` slug; the canonical production experience is [octoberline-211.vercel.app](https://octoberline-211.vercel.app/).
+> **Hosting name:** the product and Vercel project are Octoberline 211. The existing GitHub repository and Pages endpoint still use the legacy `meridian-no-88-typewriter` slug; the canonical production experience is [octoberline211.com](https://octoberline211.com/).
 
 ## What works
 
@@ -43,7 +47,7 @@ See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the evidence boundary and [the ro
 
 ## Use the published baseline
 
-Open the production experience at [octoberline-211.vercel.app](https://octoberline-211.vercel.app/). The legacy GitHub Pages URL may remain visible until the GitHub repository is deliberately renamed.
+Open the production experience at [octoberline211.com](https://octoberline211.com/). The legacy GitHub Pages URL may remain visible until the GitHub repository is deliberately renamed.
 
 Once this branch is committed, merged, and published, download
 `Octoberline-211-Typewriter.html` from [Releases](https://github.com/alimabsoute/meridian-no-88-typewriter/releases),
@@ -132,6 +136,6 @@ with or endorsed by PECO.
 
 ## Publishing
 
-Every push to `main` runs the complete release verification with the hosted runner's Chrome installation, rebuilds the single-file simulator, preview routes, named release asset, and deterministic web ZIP, and deploys `dist/` to GitHub Pages through `.github/workflows/pages.yml`. The verified prebuilt `dist/` artifact is also deployed to the Vercel production project at [octoberline-211.vercel.app](https://octoberline-211.vercel.app/).
+Every push to `main` runs the complete release verification with the hosted runner's Chrome installation, rebuilds the single-file simulator, preview routes, named release asset, and deterministic web ZIP, and deploys `dist/` to GitHub Pages through `.github/workflows/pages.yml`. The verified prebuilt `dist/` artifact is also deployed to the Vercel production project at [octoberline211.com](https://octoberline211.com/).
 
 Copyright © 2026 alimabsoute. All rights reserved.

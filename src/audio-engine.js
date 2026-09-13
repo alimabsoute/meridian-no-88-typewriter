@@ -20,16 +20,27 @@ export class TypewriterAudio {
       } catch {
         this.context = new AudioContext();
       }
-      this.master = this.context.createGain();
-      this.paperMaster = this.context.createGain();
-      this.master.gain.value = this.enabled ? 0.72 * this.volume : 0;
-      this.paperMaster.gain.value = this.enabled ? 0.72 * this.paperVolume : 0;
-      this.master.connect(this.context.destination);
-      this.paperMaster.connect(this.context.destination);
+      this.connectOutputs();
       this.noiseBuffer = this.makeNoiseBuffer(2);
     }
     if (this.context.state === 'suspended') await this.context.resume();
     return true;
+  }
+
+  connectOutputs() {
+      this.master = this.context.createGain();
+      this.paperMaster = this.context.createGain();
+      this.master.gain.value = this.enabled ? 0.72 * this.volume : 0;
+      this.paperMaster.gain.value = this.enabled ? 0.72 * this.paperVolume : 0;
+      // Catch overlapping hard strikes without flattening their initial clack.
+      this.mechanicalCompressor = this.context.createDynamicsCompressor();
+      this.mechanicalCompressor.threshold.value = -8;
+      this.mechanicalCompressor.knee.value = 6;
+      this.mechanicalCompressor.ratio.value = 6;
+      this.mechanicalCompressor.attack.value = 0.002;
+      this.mechanicalCompressor.release.value = 0.07;
+      this.master.connect(this.mechanicalCompressor).connect(this.context.destination);
+      this.paperMaster.connect(this.context.destination);
   }
 
   setEnabled(enabled) {
@@ -113,27 +124,31 @@ export class TypewriterAudio {
   }
 
   keyDown(force = 0.72) {
+    force *= 3;
     const variation = 0.9 + Math.random() * 0.2;
-    this.noise({ duration: 0.018, gain: 0.055 * force, frequency: 3100 * variation, q: 2.2 });
-    this.tone({ duration: 0.022, gain: 0.018 * force, frequency: 620 * variation, endFrequency: 490 * variation, type: 'triangle' });
+    this.noise({ duration: 0.018, gain: 0.14 * force, frequency: 3100 * variation, q: 1.6 });
+    this.tone({ duration: 0.028, gain: 0.045 * force, frequency: 620 * variation, endFrequency: 490 * variation, type: 'triangle' });
   }
 
   strike(force = 0.72) {
+    force *= 3;
     const variation = 0.93 + Math.random() * 0.14;
-    this.noise({ duration: 0.025, gain: 0.17 * force, frequency: 2850 * variation, q: 0.9 });
-    this.noise({ time: 0.002, duration: 0.052, gain: 0.09 * force, frequency: 520 * variation, q: 1.1 });
-    this.tone({ duration: 0.075, gain: 0.05 * force, frequency: 188 * variation, endFrequency: 135 * variation, type: 'triangle' });
-    this.tone({ time: 0.004, duration: 0.035, gain: 0.017 * force, frequency: 970 * variation, type: 'sine' });
+    this.noise({ duration: 0.028, gain: 0.58 * force, frequency: 2650 * variation, q: 0.9 });
+    this.noise({ time: 0.002, duration: 0.065, gain: 0.28 * force, frequency: 580 * variation, q: 1.1 });
+    this.tone({ duration: 0.085, gain: 0.16 * force, frequency: 188 * variation, endFrequency: 135 * variation, type: 'triangle' });
+    this.tone({ time: 0.004, duration: 0.043, gain: 0.045 * force, frequency: 970 * variation, type: 'sine' });
+    // A quieter delayed return gives the typebar a physical double clack.
+    this.noise({ time: 0.032, duration: 0.022, gain: 0.095 * force, frequency: 1750 * variation, q: 1.4 });
   }
 
   escapement() {
-    this.noise({ duration: 0.018, gain: 0.065, frequency: 4300, q: 3.4 });
-    this.tone({ duration: 0.024, gain: 0.019, frequency: 780, endFrequency: 590, type: 'square' });
+    this.noise({ duration: 0.018, gain: 0.10, frequency: 3900, q: 2.4 });
+    this.tone({ duration: 0.024, gain: 0.03, frequency: 780, endFrequency: 590, type: 'square' });
   }
 
   space() {
-    this.noise({ duration: 0.032, gain: 0.09, frequency: 1450, q: 1.2 });
-    this.tone({ duration: 0.055, gain: 0.038, frequency: 150, endFrequency: 110, type: 'triangle' });
+    this.noise({ duration: 0.032, gain: 0.19, frequency: 1450, q: 1.2 });
+    this.tone({ duration: 0.065, gain: 0.08, frequency: 150, endFrequency: 110, type: 'triangle' });
   }
 
   backspace() {
