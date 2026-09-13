@@ -350,7 +350,9 @@ try {
   await page.mouse.move(640, 400);
   await page.waitForTimeout(1_550);
   invariant(!await page.locator('#app').evaluate((element) => element.classList.contains('quiet-writing-active')), 'Quiet mode re-faded after pointer reveal without new typing.');
+  const quietResumeMarks = await page.evaluate(() => window.__OCTOBERLINE_211__.document.marks.length);
   await page.keyboard.press('KeyC');
+  await page.waitForFunction((count) => window.__OCTOBERLINE_211__.document.marks.length === count + 1, quietResumeMarks);
   await page.waitForFunction(() => document.querySelector('#app')?.classList.contains('quiet-writing-active'), null, { timeout: 4_000 });
   await page.keyboard.press('Escape');
   const quiet = await page.evaluate(() => ({
