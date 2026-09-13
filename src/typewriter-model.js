@@ -540,6 +540,68 @@ export class TypewriterModel {
     }
     this.paperMesh.castShadow = true;
     this.paperMesh.receiveShadow = true;
+    this.buildKeyRenderBatches();
+  }
+
+  buildKeyRenderBatches() {
+    this.disposeKeyRenderBatches();
+    // Preserve each mechanical mesh as a transform/raycast/clearance proxy.
+    // Only the five identical opaque parts share rendering; labels, inspection
+    // shells, paper, typebars and special keys keep their original renderers.
+    const keys = [...this.keys.values()].filter((key) => key.action === 'character');
+    this.keyRenderBatches = ['stem', 'ring', 'cap', 'lever', 'link'].map((part) => {
+      const proxies = keys.map((key) => key[part]);
+      const first = proxies[0];
+      if (!first || proxies.some((proxy) => proxy.geometry !== first.geometry || proxy.material !== first.material)) {
+        throw new Error(`Keyboard ${part} batching requires identical geometry and material`);
+      }
+      const mesh = new THREE.InstancedMesh(first.geometry, first.material, proxies.length);
+      mesh.name = `KeyboardInstances_${part}`;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      // These five small batches remain within the machine's envelope. Avoid
+      // stale instance bounds clipping a depressed key or a shifted linkage.
+      mesh.frustumCulled = false;
+      mesh.castShadow = first.castShadow;
+      mesh.receiveShadow = first.receiveShadow;
+      this.machine.add(mesh);
+      const originalVisibility = proxies.map((proxy) => proxy.visible);
+      for (const proxy of proxies) proxy.visible = false;
+      return { mesh, proxies, originalVisibility, previousMatrices: new Float64Array(proxies.length * 16).fill(NaN) };
+    });
+    this.keyRenderMatrix = new THREE.Matrix4();
+    this.updateKeyRenderBatches();
+  }
+
+  updateKeyRenderBatches() {
+    if (!this.keyRenderBatches) return;
+    for (const key of this.keys.values()) {
+      if (key.action === 'character') key.group.updateMatrix();
+    }
+    for (const { mesh, proxies, previousMatrices } of this.keyRenderBatches) {
+      let changed = false;
+      proxies.forEach((proxy, index) => {
+        proxy.updateMatrix();
+        const matrix = this.keyRenderMatrix.copy(proxy.matrix);
+        if (proxy.parent !== this.machine) matrix.premultiply(proxy.parent.matrix);
+        const offset = index * 16;
+        if (matrix.elements.some((value, component) => value !== previousMatrices[offset + component])) {
+          mesh.setMatrixAt(index, matrix);
+          previousMatrices.set(matrix.elements, offset);
+          changed = true;
+        }
+      });
+      if (changed) mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  disposeKeyRenderBatches() {
+    for (const { mesh, proxies, originalVisibility } of this.keyRenderBatches ?? []) {
+      mesh.removeFromParent();
+      mesh.dispose();
+      proxies.forEach((proxy, index) => { proxy.visible = originalVisibility[index]; });
+    }
+    this.keyRenderBatches = undefined;
+    this.keyRenderMatrix = undefined;
   }
 
   addShell(mesh) {
@@ -1185,7 +1247,7 @@ export class TypewriterModel {
     this.machine.add(link);
 
     const record = {
-      code, lower, upper, group, cap, ring, labelDisc, lever, link, leverStart, leverEnd, linkEndBase, typebar,
+      code, lower, upper, group, stem, cap, ring, labelDisc, lever, link, leverStart, leverEnd, linkEndBase, typebar,
       baseY: y, baseRotationX: -0.09, depression: 0, phase: -1,
       action: 'character',
     };
@@ -1878,6 +1940,7 @@ export class TypewriterModel {
     this.updateTab(dt);
     this.updatePaperLoading(dt);
     this.updateMechanisms(dt);
+    this.updateKeyRenderBatches();
   }
 
   updateKeys(dt) {

@@ -72,6 +72,7 @@ describe('Octoberline 211 keyboard geometry clearance', () => {
   });
 
   afterAll(() => {
+    model.disposeKeyRenderBatches();
     model.root.traverse((object) => {
       object.geometry?.dispose?.();
       if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose?.());
@@ -236,5 +237,89 @@ describe('Octoberline 211 keyboard geometry clearance', () => {
       ['Equal', 'Backspace'],
     ]);
     expect(snapshot.intersections.every(({ minimumClearance }) => minimumClearance < 0)).toBe(true);
+  });
+
+  it('renders repeated key parts in five batches without changing their geometry or material', () => {
+    expect(model.keyRenderBatches).toHaveLength(5);
+    let proxyCount = 0;
+    for (const { mesh, proxies } of model.keyRenderBatches) {
+      expect(mesh.count).toBe(47);
+      expect(mesh.frustumCulled).toBe(false);
+      expect(mesh.castShadow).toBe(false);
+      for (const proxy of proxies) {
+        expect(proxy.visible).toBe(false);
+        expect(mesh.geometry).toBe(proxy.geometry);
+        expect(mesh.material).toBe(proxy.material);
+        proxyCount += 1;
+      }
+    }
+    expect(proxyCount - model.keyRenderBatches.length).toBe(230);
+    for (const key of model.keys.values()) {
+      if (key.action === 'character') expect(key.labelDisc.visible).toBe(true);
+      else expect(key.base.visible).toBe(true);
+    }
+  });
+
+  it('keeps batched key matrices aligned at rest, during key travel, and under shifted inspection', () => {
+    const local = new THREE.Matrix4();
+    const world = new THREE.Matrix4();
+    const checkMatrices = () => {
+      model.scene.updateMatrixWorld(true);
+      for (const { mesh, proxies } of model.keyRenderBatches) {
+        proxies.forEach((proxy, index) => {
+          mesh.getMatrixAt(index, local);
+          world.multiplyMatrices(mesh.matrixWorld, local);
+          world.elements.forEach((value, component) => {
+            expect(value).toBeCloseTo(proxy.matrixWorld.elements[component], 5);
+          });
+        });
+      }
+    };
+    model.updateKeyRenderBatches();
+    checkMatrices();
+    model.audio.shift = vi.fn();
+    model.root.position.set(.3, .2, -.1);
+    model.root.rotation.y = .18;
+    model.animateKey('KeyA', .2);
+    model.setShiftHeld(true, 'ShiftRight');
+    model.toggleShiftLock();
+    model.setInspection(true);
+    model.update(.04);
+    model.update(.04);
+    expect(model.keys.get('KeyA').depression).toBeGreaterThan(.1);
+    expect(model.shiftAmount).toBeGreaterThan(0);
+    expect(model.inspectionAmount).toBeGreaterThan(0);
+    checkMatrices();
+    model.setShiftHeld(false);
+    model.toggleShiftLock();
+    model.setInspection(false);
+    model.root.position.set(0, 0, 0);
+    model.root.rotation.y = 0;
+    for (let step = 0; step < 80; step += 1) model.update(.04);
+    checkMatrices();
+    const versions = model.keyRenderBatches.map(({ mesh }) => mesh.instanceMatrix.version);
+    model.updateKeyRenderBatches();
+    expect(model.keyRenderBatches.map(({ mesh }) => mesh.instanceMatrix.version)).toEqual(versions);
+  });
+
+  it('retains hidden key proxies for pointer hits and disposes only owned instance buffers', () => {
+    const key = model.keys.get('KeyA');
+    model.scene.updateMatrixWorld(true);
+    const center = key.cap.getWorldPosition(new THREE.Vector3());
+    const ray = new THREE.Raycaster(center.clone().add(new THREE.Vector3(0, 2, 0)), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObjects(model.clickTargets, false)[0];
+    expect(hit?.object.userData.keyRecord).toBe(key);
+    expect(key.cap.visible).toBe(false);
+    const batches = model.keyRenderBatches;
+    const disposeSpies = batches.map(({ mesh }) => vi.spyOn(mesh, 'dispose'));
+    const geometryDispose = vi.spyOn(batches[0].mesh.geometry, 'dispose');
+    const materialDispose = vi.spyOn(batches[0].mesh.material, 'dispose');
+    model.disposeKeyRenderBatches();
+    model.disposeKeyRenderBatches();
+    expect(disposeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+    expect(geometryDispose).not.toHaveBeenCalled();
+    expect(materialDispose).not.toHaveBeenCalled();
+    expect(key.cap.visible).toBe(true);
+    model.buildKeyRenderBatches();
   });
 });
