@@ -9,18 +9,20 @@ Last reviewed: 2026-08-30
 - Active scope: roadmap Phases 0–5
 - Product boundary: one stationary machine and writing desk; no walking or avatar
 - Standalone build: one self-contained HTML file that opens directly from disk
-- Hosting: GitHub Pages continues to deploy from `main`; this branch is not live until merged and deployed
-- Legacy infrastructure: the actual GitHub remote and Pages address still use
-  `meridian-no-88-typewriter`; no replacement remote has been created
-- Approval gate: the Carbon Mark and Quiet Desk at Dusk homepage are approved;
-  commit, push, merge, and publication remain separate release actions
+- Production: the verified prebuilt release is live at
+  `https://octoberline-211.vercel.app/` on Vercel project `octoberline-211`
+- GitHub: the Phase 0-5 release and Vercel configuration are promoted to `main`
+- Legacy infrastructure: the GitHub repository and Pages address still use
+  `meridian-no-88-typewriter`; the Vercel address is the canonical live build
+- Custom domain: `octoberline211.com` was available at the 2026-08-30 check;
+  purchase and registration-contact confirmation are still pending
 
 The durable phase board and acceptance criteria live in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Integrated branch status
 
-- Phase 0: brand metadata, roadmap, documentation, packaging, and the integrated
-  verification gate are complete. Commit, push, merge, and deployment remain gated.
+- Phase 0: brand metadata, roadmap, documentation, packaging, the integrated
+  verification gate, GitHub promotion, and Vercel production deployment are complete.
 - Phase 1: the approved Carbon Mark and Quiet Desk at Dusk composition are live.
   Entry stays silent, previews one modeled key, offers the mechanics guide, and
   glides from the responsive desk/window composition into the stable Front view.
@@ -100,8 +102,8 @@ implementation, and the Phase 6–7 previews.
 
 ## Release sequence
 
-The identity and homepage approval gates are fulfilled. After the complete suite
-passes on the final tree, the remaining release actions are commit, push, merge,
-and publication; none is implied by local verification. A Philadelphia
+The identity, homepage, GitHub promotion, and Vercel publication gates are
+fulfilled. The remaining hosting action is purchase and attachment of
+`octoberline211.com`; the verified Vercel alias is already live. A Philadelphia
 typist/repairer review remains an open Phase 5 authenticity gate and must not be
 claimed in advance.
