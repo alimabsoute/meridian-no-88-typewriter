@@ -549,6 +549,9 @@ export class TypewriterModel {
     // Only the five identical opaque parts share rendering; labels, inspection
     // shells, paper, typebars and special keys keep their original renderers.
     const keys = [...this.keys.values()].filter((key) => key.action === 'character');
+    this.keyRenderKeys = keys;
+    this.keyRenderIndexByCode = new Map(keys.map((key, index) => [key.code, index]));
+    this.dirtyKeyRenderIndices = new Set();
     this.keyRenderBatches = ['stem', 'ring', 'cap', 'lever', 'link'].map((part) => {
       const proxies = keys.map((key) => key[part]);
       const first = proxies[0];
@@ -572,14 +575,17 @@ export class TypewriterModel {
     this.updateKeyRenderBatches();
   }
 
-  updateKeyRenderBatches() {
+  updateKeyRenderBatches(force = true) {
     if (!this.keyRenderBatches) return;
-    for (const key of this.keys.values()) {
-      if (key.action === 'character') key.group.updateMatrix();
+    const indices = force ? this.keyRenderKeys.map((_key, index) => index) : this.dirtyKeyRenderIndices;
+    if (!force && indices.size === 0) return;
+    for (const index of indices) {
+      this.keyRenderKeys[index].group.updateMatrix();
     }
     for (const { mesh, proxies, previousMatrices } of this.keyRenderBatches) {
       let changed = false;
-      proxies.forEach((proxy, index) => {
+      for (const index of indices) {
+        const proxy = proxies[index];
         proxy.updateMatrix();
         const matrix = this.keyRenderMatrix.copy(proxy.matrix);
         if (proxy.parent !== this.machine) matrix.premultiply(proxy.parent.matrix);
@@ -589,9 +595,10 @@ export class TypewriterModel {
           previousMatrices.set(matrix.elements, offset);
           changed = true;
         }
-      });
+      }
       if (changed) mesh.instanceMatrix.needsUpdate = true;
     }
+    this.dirtyKeyRenderIndices.clear();
   }
 
   disposeKeyRenderBatches() {
@@ -602,6 +609,9 @@ export class TypewriterModel {
     }
     this.keyRenderBatches = undefined;
     this.keyRenderMatrix = undefined;
+    this.keyRenderKeys = undefined;
+    this.keyRenderIndexByCode = undefined;
+    this.dirtyKeyRenderIndices = undefined;
   }
 
   addShell(mesh) {
@@ -1940,11 +1950,15 @@ export class TypewriterModel {
     this.updateTab(dt);
     this.updatePaperLoading(dt);
     this.updateMechanisms(dt);
-    this.updateKeyRenderBatches();
+    this.updateKeyRenderBatches(false);
   }
 
   updateKeys(dt) {
     for (const key of this.activeKeys) {
+      // Capture the slot before the final resting frame removes its key. These
+      // are the only runtime mutations of round-key groups and their linkages.
+      const renderIndex = this.keyRenderIndexByCode?.get(key.code);
+      if (renderIndex !== undefined) this.dirtyKeyRenderIndices.add(renderIndex);
       let amount = 0;
       if (key.phase >= 0) {
         key.phase += dt / (key.duration || 0.15);

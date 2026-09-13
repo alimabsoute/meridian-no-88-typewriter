@@ -322,4 +322,26 @@ describe('Octoberline 211 keyboard geometry clearance', () => {
     expect(key.cap.visible).toBe(true);
     model.buildKeyRenderBatches();
   });
+
+  it('does no key batch matrix work while idle and updates only the moving key slot', () => {
+    for (let step = 0; step < 80; step += 1) model.update(.04);
+    const spies = model.keyRenderBatches.flatMap(({ proxies }) => proxies.map((proxy) => vi.spyOn(proxy, 'updateMatrix')));
+    const groupSpies = model.keyRenderKeys.map((key) => vi.spyOn(key.group, 'updateMatrix'));
+    try {
+      model.update(.04);
+      expect(spies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
+      expect(groupSpies.every((spy) => spy.mock.calls.length === 0)).toBe(true);
+      model.animateKey('KeyO', .2);
+      model.update(.04);
+      expect(spies.reduce((total, spy) => total + spy.mock.calls.length, 0)).toBe(5);
+      expect(groupSpies.reduce((total, spy) => total + spy.mock.calls.length, 0)).toBe(1);
+      for (const spy of [...spies, ...groupSpies]) spy.mockClear();
+      model.updateKeyRenderBatches();
+      expect(spies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      expect(groupSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+    } finally {
+      for (const spy of [...spies, ...groupSpies]) spy.mockRestore();
+      for (let step = 0; step < 80; step += 1) model.update(.04);
+    }
+  });
 });
