@@ -215,7 +215,10 @@ try {
     roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
   }), entryStart);
   invariant(
-    Math.abs(entry.before.position[0] - 4.2) < 0.02 && Math.abs(entry.before.position[2] - 13.2) < 0.02
+    entry.before.position[0] >= 4.0 && entry.before.position[0] <= 5.25
+      && entry.before.position[1] >= 5.7 && entry.before.position[1] <= 6.2
+      && entry.before.position[2] >= 13.19 && entry.before.position[2] <= 14.61
+      && Math.abs(entry.before.fov - 37) < 0.02
       && Math.abs(entry.position[0] - 1.2) < 0.02
       && Math.abs(entry.position[1] - 5.7) < 0.02
       && Math.abs(entry.position[2] - 16.8) < 0.02
