@@ -8,7 +8,7 @@ An enthusiast-grade, browser-based simulation of a late-1930s manual typewriter 
 
 ## September 2026 update
 
-The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact. The current working revision restores the original charcoal/brass typography and headline, with an optional 21-group assembly of the actual typewriter over 4.6 seconds, readable start/guide controls, and a full room that starts after entry. It also adds a slim archival Philadelphia TV and wall paintings. These new changes await their own final release verification and publication record. See [landing architecture](docs/immediate-landing.md), [earlier release evidence](docs/releases/2026-09-13/), and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
+The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact. The opening restores the original charcoal/brass typography and headline, with an optional 21-group assembly of the actual typewriter over 4.6 seconds, readable start/guide controls, and a full room that starts after entry. It also adds a slim archival Philadelphia TV and wall paintings. See the [release history](https://github.com/alimabsoute/meridian-no-88-typewriter/releases) for verification results and publication records, [landing architecture](docs/immediate-landing.md), [earlier release evidence](docs/releases/2026-09-13/), and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
 
 ## Earlier release status — August 2026 historical record
 
@@ -49,7 +49,7 @@ See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the evidence boundary and [the ro
 
 Open the production experience at [octoberline211.com](https://octoberline211.com/). The legacy GitHub Pages URL may remain visible until the GitHub repository is deliberately renamed.
 
-Once this branch is committed, merged, and published, download
+For an available published build, download
 `Octoberline-211-Typewriter.html` from [Releases](https://github.com/alimabsoute/meridian-no-88-typewriter/releases),
 double-click it, and enter the machine. The core simulator works offline in one HTML
 file and needs a current WebGL 2 browser with graphics acceleration. Ordinary
@@ -57,6 +57,7 @@ file and needs a current WebGL 2 browser with graphics acceleration. Ordinary
 a dark TV and linen artwork fallbacks, even if a media folder is adjacent. To use
 the optional media offline, serve the extracted web ZIP over HTTP on localhost
 with its `media/` folder intact. No special browser file-access flags are needed.
+
 ### Controls
 
 - Type normally to operate the matching modeled keys.

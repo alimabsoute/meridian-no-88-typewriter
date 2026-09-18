@@ -6,8 +6,8 @@ This revision restores the application's charcoal, aged-brass, Bebas Neue and
 Special Elite identity and the original headline, “A room for the next page.”
 The readable entry action remains “Start typing on the typewriter now,” with
 “No sign-in. No credit cards. Completely free.” The guide remains available
-without starting the full simulator. This describes the working revision;
-publication and final passing checks must be established by its release record.
+without starting the full simulator. This describes the startup architecture;
+release records identify the verified source and deployment.
 
 The flat machine image and animated-paper composition from the earlier
 September 18 release are replaced by an optional preview of the actual modeled
@@ -71,6 +71,7 @@ HTTP on localhost, keeping its `media/` folder intact. The video, poster and
 paintings are separate local assets, not embedded in the standalone HTML. HTTP
 room entry may request those local assets; direct-file core behavior and HTTP
 media playback are separate validation paths.
+
 ## Accessibility and recovery
 
 The entry actions are native keyboard-accessible buttons with visible focus.
