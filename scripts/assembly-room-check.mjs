@@ -26,7 +26,8 @@ async function decorState() {
       frameHash = ctx.getImageData(0, 0, 64, 36).data.reduce((hash, value) => ((hash * 31) + value) >>> 0, 0);
     }
     return { ...decor.getState(), frameHash, screenUsesVideo: decor.screenMaterial.map === decor.videoTexture,
-      screenColor: decor.screenMaterial.color.getHexString(), videoPaused: video?.paused };
+      screenColor: decor.screenMaterial.color.getHexString(), videoPaused: video?.paused,
+      videoSeeking: video?.seeking, videoReadyState: video?.readyState, videoEnded: video?.ended };
   });
 }
 try {
@@ -101,9 +102,23 @@ try {
   assert.equal(await page.locator('#tv-toggle b').textContent(), 'PAUSED');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.waitForFunction(time => window.__OCTOBERLINE_211__.room.decor.video.currentTime > time + 0.25, reducedRoom.currentTime);
-  await page.evaluate(() => { const video = window.__OCTOBERLINE_211__.room.decor.video; video.currentTime = video.duration - 0.3; });
-  await page.waitForFunction(() => { const v = window.__OCTOBERLINE_211__.room.decor.video; return !v.seeking && v.currentTime < 2 && !v.paused; }, null, { timeout: 15000 });
-  report.scenarios.push({ name: 'tv-off-restored-reduced-motion-and-loop', poweredOff, restoredOff, reducedRoom, looped: await decorState() });
+  const loopBoundary = await page.evaluate(() => {
+    const video = window.__OCTOBERLINE_211__.room.decor.video;
+    video.currentTime = video.duration - 0.3;
+    return video.currentTime;
+  });
+  // Prove time wrapped behind the seek point. A slow renderer can miss the
+  // first two seconds of the new loop even while the video plays correctly.
+  try {
+    await page.waitForFunction(boundary => {
+      const v = window.__OCTOBERLINE_211__.room.decor.video;
+      return !v.seeking && v.currentTime < boundary - 1 && !v.paused;
+    }, loopBoundary, { timeout: 15000, polling: 100 });
+  } catch (error) {
+    report.loopFailure = { loopBoundary, state: await decorState() };
+    throw error;
+  }
+  report.scenarios.push({ name: 'tv-off-restored-reduced-motion-and-loop', poweredOff, restoredOff, reducedRoom, loopBoundary, looped: await decorState() });
   await context.close();
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   const small = await mobile.newPage();
