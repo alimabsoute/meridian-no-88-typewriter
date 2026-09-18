@@ -7,6 +7,15 @@ import { BRAND } from '../src/brand.js';
 
 export const DEFAULT_PREVIEW_URL = 'http://127.0.0.1:4177/';
 
+// The room intentionally does not exist until the visitor chooses to enter.
+// Keep the established startup deadline; do not fake or eagerly load its API.
+export async function enterStudio(page, { timeout = 60_000 } = {}) {
+  if (!await page.evaluate(() => Boolean(window.__OCTOBERLINE_211__))) {
+    await page.locator('#enter-studio').click();
+  }
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__?.keyboardCaptured), null, { timeout });
+}
+
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PREVIEW_PORT = 4177;
 const START_TIMEOUT_MS = 30_000;

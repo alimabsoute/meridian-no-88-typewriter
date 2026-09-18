@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 import { DEFAULT_PREVIEW_URL, ensurePreviewServer, launchBrowser, withQuality } from './browser-test-helpers.mjs';
 const preview = await ensurePreviewServer({ targetUrl: process.env.TARGET_URL || withQuality(DEFAULT_PREVIEW_URL, 'low') });
 const browser = await launchBrowser();
@@ -10,8 +11,7 @@ async function state() {
 }
 try {
  await page.goto(preview.targetUrl,{waitUntil:'domcontentloaded',timeout:60000});
- await page.waitForFunction(()=>Boolean(window.__OCTOBERLINE_211__),null,{timeout:60000});
- await page.click('#enter-studio');
+ await enterStudio(page);
  await page.keyboard.type('Paper handling regression.',{delay:35});
  await page.click('[data-workbench=paper]');
  await page.click('#release-sheet'); await settle();

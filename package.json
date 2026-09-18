@@ -10,6 +10,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "test": "vitest run",
+    "test:landing": "node scripts/landing-motion-check.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test:interaction": "node scripts/interaction-check.mjs",
     "test:offline": "node scripts/direct-file-check.mjs",
@@ -22,7 +23,7 @@
     "test:package": "node scripts/release-package-check.mjs",
     "package:release": "node scripts/package-release.mjs",
     "build:release": "npm run build && npm run package:release && npm run test:package",
-    "verify": "npm test && npm run build:release && npm run test:interaction && npm run test:release-ui && npm run test:workbench && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
+    "verify": "npm test && npm run build:release && npm run test:landing && npm run test:interaction && npm run test:release-ui && npm run test:workbench && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.2.6",

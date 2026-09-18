@@ -1,6 +1,7 @@
 /** Procedural Web Audio sound design: no external samples or network requests. */
 export class TypewriterAudio {
-  constructor() {
+  constructor({ contextFactory = null } = {}) {
+    this.contextFactory = contextFactory;
     this.context = null;
     this.master = null;
     this.paperMaster = null;
@@ -16,7 +17,7 @@ export class TypewriterAudio {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return false;
       try {
-        this.context = new AudioContext({ latencyHint: 'interactive' });
+        this.context = this.contextFactory?.() || new AudioContext({ latencyHint: 'interactive' });
       } catch {
         this.context = new AudioContext();
       }

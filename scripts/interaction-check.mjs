@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 async function openWorkbench(page, name) {
   if (await page.locator('#app').getAttribute('data-workbench-panel') !== name) {
     await page.click(`[data-workbench="${name}"]`);
@@ -183,7 +184,7 @@ async function waitForSimulator(page) {
   page.on('pageerror', onPageError);
   try {
     await page.goto(targetUrl, { waitUntil: 'networkidle' });
-    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
+    await enterStudio(page);
   } catch (error) {
     // WebGL fallback errors and module failures are otherwise lost behind a
     // generic readiness timeout. Avoid another renderer-dependent evaluation.
@@ -232,12 +233,10 @@ await page.addInitScript(deterministicRandom);
 const errors = collectErrors(page);
 await page.goto(targetUrl, { waitUntil: 'networkidle' });
 try {
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
+  await enterStudio(page);
 } catch (error) {
   throw new Error(`Simulator did not initialize: ${errors.join(' | ') || error.message}`);
 }
-await page.click('#enter-studio');
-
 const paperAudioState = await page.evaluate(() => {
   const control = document.getElementById('paper-volume');
   const machineBefore = window.__OCTOBERLINE_211__.audio.volume;
@@ -410,7 +409,7 @@ let expectedKeyboardText = '';
 let tabBackspaceState;
 try {
   await waitForSimulator(keyboardPage);
-  await keyboardPage.click('#enter-studio');
+  await enterStudio(keyboardPage);
   await keyboardPage.waitForFunction(() => !window.__OCTOBERLINE_211__.model.busy);
 
   for (const representative of rowRepresentatives) {
@@ -517,7 +516,6 @@ try {
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
       && window.__OCTOBERLINE_211__.room.getState().reducedMotion,
   );
-  await reducedPage.hover('#enter-studio');
   await reducedPage.waitForTimeout(120);
   const initialReduced = await reducedPage.evaluate(() => {
     const duration = getComputedStyle(document.querySelector('#intro-overlay')).transitionDuration.split(',')[0].trim();
@@ -532,7 +530,7 @@ try {
     };
   });
 
-  await reducedPage.click('#enter-studio');
+  await enterStudio(reducedPage);
   await reducedPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   const reducedEntry = await reducedPage.evaluate(() => ({
     position: window.__OCTOBERLINE_211__.camera.position.toArray(),
@@ -912,7 +910,7 @@ await page.selectOption('#weather-select', 'snow');
 await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.getState().weather === 'snow');
 await page.waitForTimeout(700);
 await page.reload({ waitUntil: 'networkidle' });
-await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
+await enterStudio(page);
 const restored = await page.evaluate(() => ({
   text: window.__OCTOBERLINE_211__.document.toPlainText(),
   sheet: window.__OCTOBERLINE_211__.paperState.insertedSheet?.sheetNumber,
@@ -930,7 +928,7 @@ await mobileContext.addInitScript(deterministicRandom);
 const mobilePage = await mobileContext.newPage();
 const mobileErrors = collectErrors(mobilePage);
 await waitForSimulator(mobilePage);
-await mobilePage.click('#enter-studio');
+await enterStudio(mobilePage);
 await mobilePage.waitForFunction(() => {
   const element = document.querySelector('#mobile-input');
   return element && getComputedStyle(element).display !== 'none' && element.getBoundingClientRect().height > 0;
@@ -972,7 +970,7 @@ const reloadErrors = collectErrors(reloadPage);
 let paperReloadRecovery;
 try {
   await waitForSimulator(reloadPage);
-  await reloadPage.click('#enter-studio');
+  await enterStudio(reloadPage);
   await reloadPage.keyboard.type('reloadproof', { delay: 8 });
   await settleKeyboardModel(reloadPage, []);
   await openDocumentTray(reloadPage);
@@ -991,7 +989,7 @@ try {
   }));
 
   await reloadPage.reload({ waitUntil: 'networkidle' });
-  await reloadPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
+  await enterStudio(reloadPage);
   const extractionRecovered = await reloadPage.evaluate(() => ({
     phase: window.__OCTOBERLINE_211__.paperView.phase,
     inserted: Boolean(window.__OCTOBERLINE_211__.paperState.insertedSheet),
@@ -1015,7 +1013,7 @@ try {
     throw new Error(`Extraction reload recovery mismatch: ${JSON.stringify({ extractionInterrupted, extractionRecovered })}`);
   }
 
-  await reloadPage.click('#enter-studio');
+  await enterStudio(reloadPage);
   await openDocumentTray(reloadPage);
   await reloadPage.click('#keep-sheet');
   await reloadPage.waitForFunction(
@@ -1031,7 +1029,7 @@ try {
   }));
 
   await reloadPage.reload({ waitUntil: 'networkidle' });
-  await reloadPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
+  await enterStudio(reloadPage);
   const filingRecovered = await reloadPage.evaluate(() => {
     const state = window.__OCTOBERLINE_211__.paperState;
     return {
@@ -1078,7 +1076,7 @@ const storageFailureErrors = collectErrors(storageFailurePage);
 let storageFailureState;
 try {
   await waitForSimulator(storageFailurePage);
-  await storageFailurePage.click('#enter-studio');
+  await enterStudio(storageFailurePage);
   await storageFailurePage.evaluate(() => {
     const originalSetItem = Storage.prototype.setItem;
     window.__OCTOBERLINE_211_RESTORE_STORAGE__ = () => { Storage.prototype.setItem = originalSetItem; };
@@ -1123,8 +1121,7 @@ for (const [label, quality, expectedQuality] of [
   try {
     const qualityUrl = withQuality(targetUrl, quality);
     await qualityPage.goto(qualityUrl, { waitUntil: 'networkidle' });
-    await qualityPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
-    await qualityPage.click('#enter-studio');
+    await enterStudio(qualityPage);
     await qualityPage.keyboard.type('q');
     await settleKeyboardModel(qualityPage, []);
     const qualityState = await qualityPage.evaluate(() => ({

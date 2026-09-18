@@ -8,7 +8,7 @@ An enthusiast-grade, browser-based simulation of a late-1930s manual typewriter 
 
 ## September 2026 update
 
-The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact; the landing adds a cinematic camera arrival, pointer response, and staged typography. See [release evidence](docs/releases/2026-09-13/) and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
+The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact. The opening now shows a lightweight animated page and the actual machine immediately, with larger start/guide controls; the 3D room starts after entry. See [landing architecture](docs/immediate-landing.md), [earlier release evidence](docs/releases/2026-09-13/), and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
 
 ## Earlier release status
 
@@ -38,8 +38,8 @@ See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the evidence boundary and [the ro
 - Adjustable carriage margin stops, configurable tabs, and Light/Medium/Heavy touch
 - Quiet Writing Mode, explicit input state, first-sheet coaching, compact mobile
   camera/mechanics controls, and independently pausable atmosphere
-- An approved live-room homepage with silent key preview, a mechanical field-guide
-  route, responsive Philadelphia framing, and a direct glide into Front view
+- A lightweight opening with animated paper, a readable shimmering start button,
+  a pre-entry guide, and a prepared first frame before the writing room appears
 - A fixed Philadelphia writing room with Clear Dusk, Autumn Wind, Steady Rain,
   First Snow, and Nor'easter presets
 - Independent machine, paper, room, weather, and optional unease audio controls

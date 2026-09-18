@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   DEFAULT_PREVIEW_URL,
   ensurePreviewServer,
+  enterStudio,
   launchBrowser,
   withQuality,
 } from './browser-test-helpers.mjs';
@@ -30,20 +31,30 @@ function assertBrowserClean(label, errors) {
 }
 
 async function waitForSimulator(page, { enter = true } = {}) {
-  await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  try {
-    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
-  } catch (error) {
-    throw new Error(`Simulator did not initialize: ${error.message}`);
-  }
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.status === 'idle');
+  await assertLightweightLanding(page);
   await page.evaluate(() => document.fonts?.ready);
   await page.waitForTimeout(900);
 
   if (enter) {
     await page.click('#enter-studio');
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
     await page.waitForFunction(() => document.querySelector('#intro-overlay')?.classList.contains('dismissed'));
     await page.waitForTimeout(900);
   }
+}
+
+async function assertLightweightLanding(page) {
+  const state = await page.evaluate(() => ({
+    landing: { ...window.__OCTOBERLINE_LANDING__ },
+    initialized: Boolean(window.__OCTOBERLINE_211__),
+    resources: { ...window.__landingResourceAudit },
+  }));
+  invariant(state.landing.status === 'idle' && state.landing.started === false
+    && !state.initialized && state.resources.webgl === 0 && state.resources.audio === 0,
+  `Landing booted room resources before entry: ${JSON.stringify(state)}`);
+  return state;
 }
 
 async function openWorkbench(page, name) {
@@ -173,6 +184,20 @@ async function captureScenario({
     ...(reducedMotion ? { reducedMotion } : {}),
   });
   await context.addInitScript(() => {
+    window.__landingResourceAudit = { webgl: 0, audio: 0 };
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (/^(webgl2?|experimental-webgl)$/.test(type)) window.__landingResourceAudit.webgl += 1;
+      return getContext.call(this, type, ...args);
+    };
+    for (const name of ['AudioContext', 'webkitAudioContext']) {
+      if (window[name]) window[name] = new Proxy(window[name], {
+        construct(target, args) {
+          window.__landingResourceAudit.audio += 1;
+          return Reflect.construct(target, args);
+        },
+      });
+    }
     // Each plate begins from a known document, room, and random seed.
     try {
       localStorage.clear();
@@ -216,160 +241,65 @@ async function captureScenario({
 let browser;
 try {
   browser = await launchBrowser();
-  await captureScenario({
-    name: 'intro',
-    filename: '01-intro.png',
-    enter: false,
-    run: async (page) => {
-      await page.hover('#enter-studio');
-      await page.waitForFunction(
-        () => (window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0) > 0.04,
-      );
-      const state = await page.evaluate(() => ({
-        overlayHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden') === 'true',
-        buttonVisible: Boolean(document.querySelector('#enter-studio')?.getBoundingClientRect().height),
-        secondaryVisible: Boolean(document.querySelector('#intro-guide')?.getBoundingClientRect().height),
-        initialized: Boolean(window.__OCTOBERLINE_211__),
-        brand: document.querySelector('.intro-carbon-brand')?.textContent.replace(/\s+/g, ' ').trim(),
-        kicker: document.querySelector('.intro-index')?.textContent,
-        title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
-        activeView: document.querySelector('.view-button.active')?.dataset.view,
-        keyPreview: window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0,
-        machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
-        roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
-        pecoIdentificationDwell: window.__OCTOBERLINE_211__.room.getState().pecoCrown.staticFrame,
-        actionsBounds: (() => {
-          const box = document.querySelector('.intro-actions')?.getBoundingClientRect();
-          return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null;
-        })(),
-        viewport: { width: innerWidth, height: innerHeight },
-      }));
-      invariant(
-        state.initialized
-          && !state.overlayHidden
-          && state.buttonVisible
-          && state.secondaryVisible
-          && state.brand === 'Octoberline 211'
-          && state.kicker === 'PHILADELPHIA · EARLY EVENING'
+  for (const variant of [
+    { name: 'intro', filename: '01-intro.png' },
+    { name: 'intro-mobile', filename: '01-intro-mobile.png', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+    { name: 'intro-reduced', filename: '01-intro-reduced.png', reducedMotion: 'reduce' },
+  ]) {
+    await captureScenario({
+      ...variant,
+      enter: false,
+      run: async (page) => {
+        await page.hover('#enter-studio');
+        const state = await page.evaluate(() => {
+          const bounds = (selector) => {
+            const box = document.querySelector(selector)?.getBoundingClientRect();
+            return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null;
+          };
+          const overlay = document.querySelector('#intro-overlay');
+          return {
+            brand: document.querySelector('.intro-carbon-brand')?.textContent.replace(/\s+/g, ' ').trim(),
+            title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
+            kicker: document.querySelector('.intro-index')?.textContent,
+            overlayVisible: getComputedStyle(overlay).visibility !== 'hidden'
+              && getComputedStyle(overlay).display !== 'none' && overlay.getAttribute('aria-hidden') !== 'true',
+            copy: bounds('.intro-content'),
+            primary: bounds('#enter-studio'),
+            secondary: bounds('#intro-guide'),
+            brandBounds: bounds('.intro-carbon-brand'),
+            scrollWidth: document.documentElement.scrollWidth,
+            viewport: { width: innerWidth, height: innerHeight },
+            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+            runningAnimations: overlay.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').length,
+          };
+        });
+        const visible = (box) => box && box.left >= 0 && box.top >= 0
+          && box.right <= state.viewport.width && box.bottom <= state.viewport.height;
+        invariant(state.overlayVisible && state.brand === 'Octoberline 211'
           && state.title === 'A room for the next page.'
-          && state.activeView === 'writer'
-          && state.keyPreview > 0.04
-          && !state.machineAudioStarted
-          && !state.roomAudioStarted
-          && state.pecoIdentificationDwell
-          && state.actionsBounds?.left >= 0
-          && state.actionsBounds?.top >= 0
-          && state.actionsBounds?.right <= state.viewport.width
-          && state.actionsBounds?.bottom <= state.viewport.height,
-        `Intro state mismatch: ${JSON.stringify(state)}`,
-      );
-      return state;
-    },
-  });
-
-  await captureScenario({
-    name: 'intro-mobile',
-    filename: '01-intro-mobile.png',
-    enter: false,
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
-    run: async (page) => {
-      const state = await page.evaluate(() => {
-        const copy = document.querySelector('.intro-content')?.getBoundingClientRect();
-        const primary = document.querySelector('#enter-studio')?.getBoundingClientRect();
-        const secondary = document.querySelector('#intro-guide')?.getBoundingClientRect();
-        const brand = document.querySelector('.intro-carbon-brand')?.getBoundingClientRect();
-        const api = window.__OCTOBERLINE_211__;
-        const crown = api.room.livingCity.crownFront;
-        const crownCorners = [
-          [-crown.geometry.parameters.width / 2, -crown.geometry.parameters.height / 2],
-          [crown.geometry.parameters.width / 2, -crown.geometry.parameters.height / 2],
-          [crown.geometry.parameters.width / 2, crown.geometry.parameters.height / 2],
-          [-crown.geometry.parameters.width / 2, crown.geometry.parameters.height / 2],
-        ].map(([x, y]) => crown.localToWorld(crown.position.clone().set(x, y, 0)).project(api.camera));
-        const crownXs = crownCorners.map(({ x }) => (x + 1) * innerWidth * 0.5);
-        const crownYs = crownCorners.map(({ y }) => (1 - y) * innerHeight * 0.5);
-        return {
-          title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
-          copy: copy ? { left: copy.left, top: copy.top, right: copy.right, bottom: copy.bottom } : null,
-          primary: primary ? { left: primary.left, top: primary.top, right: primary.right, bottom: primary.bottom } : null,
-          secondary: secondary ? { left: secondary.left, top: secondary.top, right: secondary.right, bottom: secondary.bottom } : null,
-          brand: brand ? { left: brand.left, top: brand.top, right: brand.right, bottom: brand.bottom } : null,
-          machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
-          roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
-          pecoIdentificationDwell: api.room.getState().pecoCrown.staticFrame,
-          crownBounds: {
-            left: Math.min(...crownXs),
-            top: Math.min(...crownYs),
-            right: Math.max(...crownXs),
-            bottom: Math.max(...crownYs),
-          },
-          scrollWidth: document.documentElement.scrollWidth,
-          viewport: { width: innerWidth, height: innerHeight },
-        };
-      });
-      invariant(
-        state.title === 'A room for the next page.'
-          && state.copy?.left >= 0
-          && state.copy?.top >= 0
-          && state.copy?.right <= state.viewport.width
-          && state.copy?.bottom <= state.viewport.height
-          && state.brand?.left >= 0
-          && state.brand?.right <= state.viewport.width
-          && state.primary?.left === state.secondary?.left
-          && state.primary?.right === state.secondary?.right
-          && state.secondary?.top >= state.primary?.bottom
-          && state.primary?.bottom - state.primary?.top >= 44
-          && state.secondary?.bottom - state.secondary?.top >= 44
-          && state.scrollWidth <= state.viewport.width
-          && state.crownBounds?.left >= 12
-          && state.crownBounds?.right <= state.viewport.width - 12
-          && state.crownBounds?.top >= 12
-          && state.crownBounds?.bottom <= state.viewport.height * 0.5
-          && !state.machineAudioStarted
-          && !state.roomAudioStarted
-          && state.pecoIdentificationDwell,
-        `Mobile intro state mismatch: ${JSON.stringify(state)}`,
-      );
-      return state;
-    },
-  });
-
-  await captureScenario({
-    name: 'intro-reduced',
-    filename: '01-intro-reduced.png',
-    enter: false,
-    reducedMotion: 'reduce',
-    run: async (page) => {
-      await page.hover('#enter-studio');
-      await page.waitForTimeout(120);
-      const state = await page.evaluate(() => {
-        const room = window.__OCTOBERLINE_211__.room;
-        const before = room.elapsed;
-        room.update(1, 99);
-        const transition = getComputedStyle(document.querySelector('#intro-overlay')).transitionDuration.split(',')[0].trim();
-        return {
-          reducedMotion: room.getState().reducedMotion,
-          roomStatic: room.elapsed === before,
-          crownStatic: room.getState().pecoCrown.staticFrame,
-          previewDepression: window.__OCTOBERLINE_211__.model.keys.get('KeyO')?.depression ?? 0,
-          transition,
-          backgroundMedia: document.querySelectorAll('#intro-overlay img, #intro-overlay video').length,
-        };
-      });
-      invariant(
-        state.reducedMotion
-          && state.roomStatic
-          && state.crownStatic
-          && state.previewDepression === 0
-          && state.transition === '0.16s'
-          && state.backgroundMedia === 0,
-        `Reduced-motion intro mismatch: ${JSON.stringify(state)}`,
-      );
-      return state;
-    },
-  });
+          && state.kicker === 'PHILADELPHIA · EARLY EVENING'
+          && visible(state.copy) && visible(state.brandBounds)
+          && visible(state.primary) && visible(state.secondary)
+          && state.primary.bottom - state.primary.top >= 44
+          && state.secondary.bottom - state.secondary.top >= 44
+          && state.scrollWidth <= state.viewport.width,
+        `Landing layout mismatch: ${JSON.stringify(state)}`);
+        if (variant.isMobile) invariant(state.primary.left === state.secondary.left
+          && state.primary.right === state.secondary.right && state.secondary.top >= state.primary.bottom,
+        `Mobile landing actions mismatch: ${JSON.stringify(state)}`);
+        if (variant.reducedMotion) invariant(state.reducedMotion && state.runningAnimations === 0,
+          `Reduced-motion landing still animates: ${JSON.stringify(state)}`);
+        await assertLightweightLanding(page);
+        await page.click('#intro-guide');
+        await page.waitForFunction(() => document.querySelector('#landing-guide')?.open);
+        await assertLightweightLanding(page);
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => !document.querySelector('#landing-guide')?.open);
+        state.resources = await assertLightweightLanding(page);
+        return state;
+      },
+    });
+  }
 
   await captureScenario({
     name: 'writer-rest',

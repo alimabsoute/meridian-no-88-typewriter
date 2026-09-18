@@ -19,6 +19,16 @@ import { PhiladelphiaWritingRoom } from './philadelphia-writing-room.js';
 import { AtmosphereAudio } from './atmosphere-audio.js';
 import { BRAND, formatSheetExportFilename } from './brand.js';
 
+const landing = window.__OCTOBERLINE_LANDING__;
+// The HTML opening has its own tiny controller. No archive, canvas, reflection,
+// skyline, or typewriter is constructed until the visitor asks to write.
+await landing.entry;
+async function paintLoadingStage(message) {
+  landing.progress(message);
+  await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+await paintLoadingStage('Getting a fresh page ready…');
+
 const STORAGE_KEY = BRAND.simulatorStorageKey;
 const PAPER_STORAGE_KEY = BRAND.paperStorageKey;
 const FIRST_SHEET_TUTORIAL_KEY = `${BRAND.storageNamespace}.first-sheet-tutorial.v1`;
@@ -118,16 +128,12 @@ function documentFromPaperRecord(record, fallbackSheetNumber = 1) {
 const initialPaperRecord = lifecycleState.insertedSheet ?? lifecycleState.looseSheet?.page ?? null;
 let page = documentFromPaperRecord(initialPaperRecord, lifecycleState.nextSheetNumber);
 
-await document.fonts.ready;
+await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 1200))]);
 
 const canvas = document.querySelector('#scene');
 const webglContext = canvas.getContext('webgl2', { antialias: true, powerPreference: 'high-performance' });
 if (!webglContext) {
-  document.getElementById('app').innerHTML = `
-    <section style="min-height:100%;display:grid;place-items:center;padding:32px;background:#090d0c;color:#e9dfc5;text-align:center">
-      <div><h1 style="font:48px 'Bebas Neue',sans-serif;letter-spacing:.08em;margin:0 0 12px">WEBGL 2 REQUIRED</h1>
-      <p style="max-width:520px;font:14px/1.7 'Special Elite',monospace;color:#bdb39b">This mechanical study needs hardware-accelerated WebGL 2. Open it in a current version of Chrome, Edge, Firefox, or Safari and enable graphics acceleration.</p></div>
-    </section>`;
+  landing.fail('WebGL 2 is required for the room. Enable graphics acceleration or open this page in a current Chrome, Edge, Firefox, or Safari browser.');
   throw new Error('WebGL 2 is unavailable.');
 }
 const renderer = new THREE.WebGLRenderer({ canvas, context: webglContext, antialias: true, powerPreference: 'high-performance' });
@@ -135,9 +141,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowQuality ? 1 : 1.75))
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.shadowMap.enabled = !lowQuality;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-// The landing's shell and paper are stationary; camera motion does not change
-// their light-space shadows. Draw once, then resume live shadows on entry.
-renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.autoUpdate = true;
 renderer.shadowMap.needsUpdate = true;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.22;
@@ -146,6 +150,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x11191b);
 scene.fog = new THREE.FogExp2(0x11191b, 0.012);
+await paintLoadingStage('Turning on the desk light…');
 // Broad, softly reflected studio surfaces make enamel and rolled metal readable.
 // This is generated locally once; the exterior retains its own dusk lighting.
 const reflectionGenerator = new THREE.PMREMGenerator(renderer);
@@ -158,8 +163,7 @@ reflectionGenerator.dispose();
 
 const compactLandingCamera = window.innerWidth <= 900;
 const camera = new THREE.PerspectiveCamera(compactLandingCamera ? 50 : 37, window.innerWidth / window.innerHeight, 0.05, 80);
-const animatedArrival = !window.matchMedia('(prefers-reduced-motion: reduce)').matches && stored?.atmospherePaused !== true;
-camera.position.set(...(animatedArrival ? [5.05, 6.12, 14.6] : [4.2, 5.8, 13.2]));
+camera.position.set(4.2, 5.8, 13.2);
 
 const controls = new OrbitControls(camera, canvas);
 canvas.style.cursor = 'default';
@@ -207,6 +211,7 @@ const weatherMode = ['quiet', 'autumn-wind', 'rain', 'snow', 'nor-easter', 'auto
 const uneaseMode = ['off', 'subtle', 'unsettling'].includes(stored?.uneaseMode)
   ? stored.uneaseMode
   : 'subtle';
+await paintLoadingStage('Opening the Philadelphia window…');
 const room = new PhiladelphiaWritingRoom({
   scene,
   renderer,
@@ -219,11 +224,12 @@ const room = new PhiladelphiaWritingRoom({
   seed: 88,
 });
 
-const audio = new TypewriterAudio();
+const audio = new TypewriterAudio({ contextFactory: () => landing.contexts.machine });
 audio.setEnabled(stored?.soundEnabled !== false);
 audio.setVolume(Number.isFinite(stored?.machineVolume) ? stored.machineVolume : 0.78);
 audio.setPaperVolume(Number.isFinite(stored?.paperVolume) ? stored.paperVolume : 0.62);
 const atmosphereAudio = new AtmosphereAudio({
+  ...(landing.contexts.room ? { contextFactory: () => landing.contexts.room } : {}),
   weather: weatherMode === 'automatic' ? 'quiet' : weatherMode,
   unease: uneaseMode,
   enabled: stored?.soundEnabled !== false,
@@ -235,6 +241,7 @@ const atmosphereAudio = new AtmosphereAudio({
   seed: 88,
 });
 let paperRenderer = new PaperRenderer(page);
+document.fonts.ready.then(() => paperRenderer.redraw(page));
 
 const refs = Object.fromEntries([
   'position-readout', 'ribbon-readout', 'sheet-readout', 'escapement-status', 'escapement-gauge',
@@ -276,17 +283,6 @@ const paperThumbnailCache = new Map();
 let paperDeskRenderGeneration = 0;
 const backgroundLayers = [...document.querySelectorAll('.ui-layer:not(#intro-overlay)')];
 for (const layer of backgroundLayers) layer.inert = true;
-const introWindowWash = document.querySelector('.intro-window-wash');
-
-function varyIntroAtmosphereCycle() {
-  if (!introWindowWash || reducedMotionQuery.matches) return;
-  const duration = 18 + Math.random() * 4;
-  introWindowWash.style.setProperty('--intro-cycle-duration', `${duration.toFixed(2)}s`);
-}
-
-varyIntroAtmosphereCycle();
-introWindowWash?.addEventListener('animationiteration', varyIntroAtmosphereCycle);
-
 function syncInputStatus() {
   const hasPaper = Boolean(lifecycle.getOverview().insertedSheet);
   const ready = keyboardCaptured && hasPaper && !paperActionBusy;
@@ -872,6 +868,7 @@ function handleStatus(event) {
   }
 }
 
+await paintLoadingStage('Placing your typewriter on the desk…');
 const model = new TypewriterModel({
   reducedMotion: reducedMotionQuery.matches,
   scene,
@@ -1285,64 +1282,18 @@ for (const [id, channel] of [['room-volume', 'room'], ['weather-volume', 'weathe
 }
 
 const enterStudioButton = document.getElementById('enter-studio');
-const landingPointer = new THREE.Vector2();
-const landingPointerSmoothed = new THREE.Vector2();
-let landingElapsed = 0;
-let landingLastFrame = null;
-let landingPreviewBeat = -1;
-let landingReady = false;
-
-refs['intro-overlay'].addEventListener('pointermove', (event) => {
-  if (event.pointerType === 'touch') return;
-  landingPointer.set((event.clientX / window.innerWidth - .5) * 2, (.5 - event.clientY / window.innerHeight) * 2);
-});
-refs['intro-overlay'].addEventListener('pointerleave', () => landingPointer.set(0, 0));
-
-function updateLandingArrival(now, delta) {
-  if (!landingReady) return;
-  if (refs['intro-overlay'].classList.contains('dismissed') || cameraMotion) return;
-  const reduced = reducedMotionQuery.matches;
-  if (reduced || atmospherePaused || refs['field-guide'].open) {
-    landingLastFrame = now;
-    return;
-  }
-  if (landingLastFrame !== null) landingElapsed += Math.min(.1, (now - landingLastFrame) / 1000);
-  landingLastFrame = now;
-  const compact = window.innerWidth <= 900;
-  const progress = Math.min(1, landingElapsed / 5.5);
-  const arrival = 1 - (1 - progress) ** 3;
-  landingPointerSmoothed.lerp(landingPointer, 1 - Math.exp(-delta * 3));
-  const drift = Math.sin(landingElapsed * .23) * .055 * arrival;
-  camera.position.set(4.2 + (1 - arrival) * .85 + (compact ? 0 : landingPointerSmoothed.x * .13) + drift,
-    5.8 + (1 - arrival) * .32 + (compact ? 0 : landingPointerSmoothed.y * .055),
-    13.2 + (1 - arrival) * 1.4);
-  controls.target.set(...(compact ? [2.8, 2.8, -1.5] : [.7, 2.6, -.1]));
-  camera.fov = compact ? 50 : 37;
-  camera.updateProjectionMatrix();
-  // Preview key travel only: never enqueue a character or modify a manuscript.
-  const beat = Math.floor(landingElapsed / 9);
-  if (landingElapsed > 1.15 && beat !== landingPreviewBeat) {
-    model.animateKey(beat % 2 ? 'KeyL' : 'KeyO', .32, .82);
-    landingPreviewBeat = beat;
-  }
-}
-
-function previewEntryKey() {
-  if (reducedMotionQuery.matches || refs['intro-overlay'].classList.contains('dismissed')) return;
-  model.animateKey('KeyO', 0.32, 0.62);
-}
-
-enterStudioButton.addEventListener('pointerenter', previewEntryKey);
-enterStudioButton.addEventListener('focus', previewEntryKey);
-
-enterStudioButton.addEventListener('click', () => {
+function enterStudio() {
   if (refs['intro-overlay'].classList.contains('dismissed')) return;
+  document.getElementById('landing-guide').close();
   enterStudioButton.disabled = true;
   refs['intro-guide'].disabled = true;
   enterStudioButton.setAttribute('aria-busy', 'true');
   refs['intro-overlay'].classList.add('entering');
   if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
-  setCameraView('front', 1.25);
+  setCameraView('front', 0.001);
+  updateCameraMotion(1);
+  controls.update();
+  renderer.render(scene, camera);
   refs['intro-overlay'].classList.add('dismissed');
   renderer.shadowMap.autoUpdate = true;
   renderer.shadowMap.needsUpdate = true;
@@ -1357,7 +1308,7 @@ enterStudioButton.addEventListener('click', () => {
   showToast(inserted ? 'KEYBOARD CONNECTED · BEGIN TYPING' : 'PAPER PATH EMPTY · LOAD A FRESH SHEET', 1500);
   announce(inserted ? 'Typewriter active. Begin typing. Press Escape to release the keyboard.' : 'Typewriter active, but no sheet is loaded. Open Document and load fresh paper.');
   if (inserted && !firstSheetTutorialState()) setTimeout(() => showFirstSheetCoach(), reducedMotionQuery.matches ? 250 : 1500);
-});
+}
 
 refs['sound-toggle'].addEventListener('click', async () => {
   if (!audio.context) await audio.start().catch(() => false);
@@ -1385,7 +1336,7 @@ function openFieldGuide(tabName = 'operation', { returnTo = 'machine' } = {}) {
 }
 
 document.getElementById('guide-open').addEventListener('click', () => openFieldGuide('operation'));
-refs['intro-guide'].addEventListener('click', () => openFieldGuide('mechanics', { returnTo: 'intro' }));
+
 
 refs['field-guide'].addEventListener('close', () => {
   if (refs['field-guide'].dataset.returnTo === 'intro' && !refs['intro-overlay'].classList.contains('dismissed')) {
@@ -2181,15 +2132,10 @@ function animate(now) {
   // Camera easing follows wall time even when rendering is under load. The
   // mechanical and paper integrators keep their bounded simulation steps.
   updateCameraMotion(elapsedDelta);
-  updateLandingArrival(now, delta);
   controls.update();
   updateLiveUi(delta);
   renderer.render(scene, camera);
-  if (!landingReady) {
-    landingReady = true;
-    refs['intro-overlay'].classList.add('scene-ready');
-    landingLastFrame = performance.now();
-  }
+
 
   frameAccumulator += delta;
   frameCount += 1;
@@ -2206,13 +2152,15 @@ const workbench = initWorkbench({
   onClose: () => { revealQuietInterface(); },
 });
 
-requestAnimationFrame(animate);
+await paintLoadingStage('Your next page is almost ready…');
+// Orientation can change while the room is being constructed.
+resize();
+setCameraView('front', 0.001);
+updateCameraMotion(1);
+controls.update();
+if (renderer.compileAsync) await renderer.compileAsync(scene, camera).catch(() => {});
 
 window.addEventListener('pagehide', () => checkpointInsertedSheet(true));
-
-if (renderer.compileAsync) {
-  renderer.compileAsync(scene, camera).catch(() => {});
-}
 
 window[BRAND.browserNamespace] = {
   workbench,
@@ -2266,3 +2214,8 @@ window[BRAND.browserNamespace] = {
     return atmospherePaused;
   },
 };
+
+enterStudio();
+landing.finish();
+lastTime = performance.now();
+requestAnimationFrame(animate);

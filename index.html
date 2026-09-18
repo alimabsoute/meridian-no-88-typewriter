@@ -6,10 +6,56 @@
     <meta name="theme-color" content="#0b0d0c" />
     <meta name="description" content="A mechanically detailed 3D manual typewriter with physical paper rituals in a Philadelphia writing room." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23090d0c'/%3E%3Cpath d='M12 17h40v25H12zM8 42h48v9H8z' fill='%23d7b36e'/%3E%3Cpath d='M18 23h28v13H18z' fill='%23eee4ce'/%3E%3C/svg%3E" />
-    <title>Octoberline 211 — Mechanical Typewriter</title>
+    <title>Octoberline 211 — A free typewriter for your next page</title>
+    <!-- LANDING_STYLE -->
   </head>
   <body>
     <main id="app" class="landing-active">
+      <!-- LANDING_BOOTSTRAP -->
+      <dialog id="landing-guide" aria-labelledby="landing-guide-title">
+        <form method="dialog"><button aria-label="Close how it works">×</button></form>
+        <h2 id="landing-guide-title">Just you and the page.</h2>
+        <ol>
+          <li><strong>Open your writing room.</strong> No account or payment. Your typewriter is ready for a fresh page.</li>
+          <li><strong>Make your first mark.</strong> Use your keyboard or tap the machine’s keys. Press Enter for that satisfying carriage return.</li>
+          <li><strong>Keep what you make.</strong> File your pages, save the text, or export an image of your typed sheet.</li>
+        </ol>
+        <button id="landing-guide-start" type="button">Start writing — it’s free ↗</button>
+      </dialog>
+
+      <section class="intro-overlay ui-layer" id="intro-overlay" aria-labelledby="intro-title" aria-describedby="intro-description">
+        <header class="landing-masthead">
+          <span class="landing-brand">Octoberline <b>211</b></span>
+          <span class="landing-edition">A writing room in Philadelphia</span>
+        </header>
+        <div class="landing-layout">
+          <div class="intro-content">
+            <span class="intro-index">A little less noise. A little more you.</span>
+            <h1 id="intro-title">Your words.<em>Their own rhythm.</em></h1>
+            <p class="intro-description" id="intro-description">Feel every keystroke. Hear the carriage return. Find your words in a living Philadelphia writing room.</p>
+            <div class="intro-actions">
+              <button class="enter-button" id="enter-studio" type="button" aria-describedby="intro-free intro-load-status">
+                <span class="enter-label">Start typing on the typewriter now</span><i aria-hidden="true">↗</i>
+              </button>
+              <p class="intro-free" id="intro-free">No sign-in. No credit cards. <strong>Completely free.</strong></p>
+              <button class="intro-guide-button" id="intro-guide" type="button">See how it works <span aria-hidden="true">↗</span></button>
+            </div>
+            <p id="intro-load-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          </div>
+          <div class="landing-stage" aria-hidden="true">
+            <div class="landing-paper">
+              <span class="paper-dateline">PHILADELPHIA, PENNSYLVANIA</span>
+              <div class="paper-writing"><span>Dear blank page,</span><span class="paper-typed">let’s make something</span><span class="paper-typed">worth keeping.</span></div>
+              <span class="paper-signature">One word at a time.</span>
+            </div>
+            <img class="landing-machine" src="/src/assets/landing-typewriter.webp" width="1100" height="900" alt="" fetchpriority="high" />
+            <span class="landing-specimen-note">Your desk. Your pace.</span>
+          </div>
+        </div>
+        <footer class="landing-footer"><span>Made for the pleasure of writing.</span><span>Write freely · Keep your pages · Export your work</span></footer>
+        <noscript><p>Please enable JavaScript to use the interactive typewriter.</p></noscript>
+      </section>
+
       <canvas id="scene" tabindex="-1" aria-label="Interactive three-dimensional mechanical typewriter"></canvas>
       <div class="atmosphere" aria-hidden="true"></div>
       <div class="film-grain" aria-hidden="true"></div>
@@ -249,34 +295,6 @@
 
       <div class="toast ui-layer" id="toast" role="status" aria-live="polite"></div>
       <div class="sr-only" id="screen-reader-status" aria-live="polite"></div>
-
-      <section class="intro-overlay ui-layer" id="intro-overlay" role="dialog" aria-modal="true" aria-labelledby="intro-title" aria-describedby="intro-description intro-sound-note">
-        <div class="intro-scene-grade" aria-hidden="true"></div>
-        <div class="intro-window-wash" aria-hidden="true"></div>
-        <div class="intro-dust" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-
-        <div class="intro-carbon-brand" aria-label="Octoberline 211">
-          <span>Octoberline</span> <b>211</b>
-        </div>
-
-        <div class="intro-content">
-          <span class="intro-index">PHILADELPHIA · EARLY EVENING</span>
-          <h1 id="intro-title"><span class="intro-title-line"><span class="intro-word">A room</span> <span class="intro-word">for</span></span> <span class="intro-title-line"><span class="intro-word">the next</span> <span class="intro-word">page.</span></span></h1>
-          <div class="intro-carriage-rule" aria-hidden="true"><i></i></div>
-          <p id="intro-description">A mechanical writing experience built one key, bell, ribbon, and carriage at a time.</p>
-          <div class="intro-actions">
-            <button class="enter-button" id="enter-studio" type="button" autofocus>
-              <span>SIT AT THE MACHINE</span><i>→</i>
-            </button>
-            <button class="intro-guide-button" id="intro-guide" type="button">SEE HOW IT WORKS</button>
-          </div>
-          <small id="intro-sound-note">Sound begins after entry · Reduced motion available</small>
-        </div>
-
-        <div class="intro-atmosphere" aria-hidden="true">
-          <span>THE CITY IS AWAKE.</span><i></i><span>THE PAGE IS YOURS.</span>
-        </div>
-      </section>
 
       <dialog class="field-guide ui-layer" id="field-guide">
         <form method="dialog" class="guide-shell">

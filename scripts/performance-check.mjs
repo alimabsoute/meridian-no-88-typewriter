@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 import {
   DEFAULT_PREVIEW_URL,
   ensurePreviewServer,
@@ -26,8 +27,7 @@ function metricMap(payload) {
 
 async function openSimulator(page, targetUrl) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
-  await page.click('#enter-studio');
+  await enterStudio(page);
   await page.waitForTimeout(900);
 }
 

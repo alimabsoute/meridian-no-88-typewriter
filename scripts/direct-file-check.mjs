@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -24,8 +25,7 @@ async function verifyStandaloneFile() {
     await page.goto(targetUrl, { waitUntil: 'load' });
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__));
-    await page.click('#enter-studio');
+    await enterStudio(page);
     await page.keyboard.type('Offline proof.', { delay: 12 });
     await page.waitForFunction(() => !window.__OCTOBERLINE_211__.model.busy);
     await page.waitForTimeout(650); // Allow the idle persistence checkpoint to commit.
@@ -34,7 +34,7 @@ async function verifyStandaloneFile() {
     if (typed !== 'Offline proof.') throw new Error(`Direct-file typing mismatch: ${JSON.stringify(typed)}`);
 
     await page.reload({ waitUntil: 'load' });
-    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__));
+    await enterStudio(page);
     const restored = await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText());
     if (restored !== typed) throw new Error(`Direct-file persistence mismatch: ${JSON.stringify(restored)}`);
     if (externalRequests.length) throw new Error(`Standalone build made external requests: ${externalRequests.join(' | ')}`);
@@ -50,12 +50,14 @@ async function verifyWebglFallback() {
   try {
     const page = await browser.newPage({ viewport: { width: 960, height: 640 } });
     await page.goto(targetUrl, { waitUntil: 'load' });
-    await page.getByText('WEBGL 2 REQUIRED').waitFor({ state: 'visible', timeout: 30000 });
+    await page.click('#enter-studio');
+    await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.status === 'error', null, { timeout: 30000 });
     const fallback = await page.evaluate(() => ({
-      messageVisible: document.body.innerText.includes('WEBGL 2 REQUIRED'),
+      messageVisible: /WebGL 2 is required/i.test(document.querySelector('#intro-load-status')?.textContent || ''),
+      retryEnabled: !document.querySelector('#enter-studio').disabled,
       simulatorStarted: Boolean(window.__OCTOBERLINE_211__),
     }));
-    if (!fallback.messageVisible || fallback.simulatorStarted) {
+    if (!fallback.messageVisible || !fallback.retryEnabled || fallback.simulatorStarted) {
       throw new Error(`WebGL fallback mismatch: ${JSON.stringify(fallback)}`);
     }
     return fallback;

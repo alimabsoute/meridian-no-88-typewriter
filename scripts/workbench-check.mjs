@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 import assert from 'node:assert/strict';
 import { launchBrowser, ensurePreviewServer, DEFAULT_PREVIEW_URL, withQuality } from './browser-test-helpers.mjs';
 const preview = await ensurePreviewServer({ targetUrl: process.env.OCTOBERLINE_UI_URL || withQuality(DEFAULT_PREVIEW_URL, 'low') });
@@ -9,8 +10,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
-    await page.click('#enter-studio');
+    await enterStudio(page);
     await page.waitForFunction(() => document.querySelector('#intro-overlay').classList.contains('dismissed'));
     assert.equal(await page.locator('.workbench-ready').count(), 1, 'Workbench initialized');
     const ids = await page.locator('[id]').evaluateAll(els => els.map(el => el.id));

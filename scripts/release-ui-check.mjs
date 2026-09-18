@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 async function openWorkbench(page, name) {
   if (await page.locator('#app').getAttribute('data-workbench-panel') !== name) {
     await page.click(`[data-workbench="${name}"]`);
@@ -43,11 +44,11 @@ async function loadSimulator(page) {
     }
   });
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_LANDING__));
 }
 
 async function enterSimulator(page) {
-  await page.click('#enter-studio');
+  await enterStudio(page);
   await page.waitForFunction(() => document.querySelector('#intro-overlay')?.classList.contains('dismissed'));
 }
 
@@ -69,128 +70,47 @@ try {
   const landing = await page.evaluate(() => {
     const primary = document.querySelector('#enter-studio');
     const secondary = document.querySelector('#intro-guide');
-    const primaryBox = primary.getBoundingClientRect();
-    const secondaryBox = secondary.getBoundingClientRect();
     return {
-      brand: document.querySelector('.intro-carbon-brand')?.textContent.replace(/\s+/g, ' ').trim(),
-      kicker: document.querySelector('.intro-index')?.textContent,
-      title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
-      description: document.querySelector('#intro-description')?.textContent,
-      describedBy: document.querySelector('#intro-overlay')?.getAttribute('aria-describedby'),
+      brand: document.querySelector('.landing-brand')?.textContent.replace(/\s+/g, ' ').trim(),
+      title: document.querySelector('#intro-title')?.textContent.trim(),
+      description: document.querySelector('#intro-description')?.textContent.trim(),
       focused: document.activeElement?.id,
-      primaryHeight: primaryBox.height,
-      secondaryHeight: secondaryBox.height,
-      backgroundMedia: document.querySelectorAll('#intro-overlay img, #intro-overlay video').length,
-      canvasVisible: getComputedStyle(document.querySelector('#scene')).display !== 'none',
-      backgroundInteractive: [...document.querySelectorAll('.ui-layer:not(#intro-overlay)')].some((element) => !element.inert),
-      machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
-      roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
-      keyboardCaptured: window.__OCTOBERLINE_211__.keyboardCaptured,
-      activeView: document.querySelector('.view-button.active')?.dataset.view,
-      marks: window.__OCTOBERLINE_211__.document.marks.length,
+      primaryHeight: primary.getBoundingClientRect().height,
+      secondaryHeight: secondary.getBoundingClientRect().height,
+      primaryFont: parseFloat(getComputedStyle(primary).fontSize),
+      secondaryFont: parseFloat(getComputedStyle(secondary).fontSize),
+      enginePresent: Boolean(window.__OCTOBERLINE_211__),
+      status: window.__OCTOBERLINE_LANDING__.status,
+      started: window.__OCTOBERLINE_LANDING__.started,
     };
   });
-  invariant(
-    landing.brand === 'Octoberline 211'
-      && landing.kicker === 'PHILADELPHIA · EARLY EVENING'
-      && landing.title === 'A room for the next page.'
-      && landing.description === 'A mechanical writing experience built one key, bell, ribbon, and carriage at a time.'
-      && landing.describedBy === 'intro-description intro-sound-note'
-      && landing.focused === 'enter-studio'
-      && landing.primaryHeight >= 44
-      && landing.secondaryHeight >= 44
-      && landing.backgroundMedia === 0
-      && landing.canvasVisible
-      && !landing.backgroundInteractive
-      && !landing.machineAudioStarted
-      && !landing.roomAudioStarted
-      && !landing.keyboardCaptured
-      && landing.activeView === 'writer'
-      && landing.marks === 0,
-    `Approved landing state mismatch: ${JSON.stringify(landing)}`,
-  );
-
+  invariant(landing.brand === 'Octoberline 211' && landing.title && landing.description
+    && landing.focused === 'enter-studio' && landing.primaryHeight >= 44 && landing.secondaryHeight >= 44
+    && landing.primaryFont >= 20 && landing.secondaryFont >= 18
+    && !landing.enginePresent && landing.status === 'idle' && !landing.started,
+    `Lightweight landing mismatch: ${JSON.stringify(landing)}`);
   await page.keyboard.press('Tab');
   const tabForward = await page.evaluate(() => document.activeElement?.id);
   await page.keyboard.press('Shift+Tab');
   const tabBackward = await page.evaluate(() => document.activeElement?.id);
   invariant(tabForward === 'intro-guide' && tabBackward === 'enter-studio', `Landing tab order mismatch: ${JSON.stringify({ tabForward, tabBackward })}`);
-
   await page.hover('#enter-studio');
-  const keyPreview = await page.evaluate(() => {
-    const api = window.__OCTOBERLINE_211__;
-    document.querySelector('#enter-studio').dispatchEvent(new FocusEvent('focus'));
-    api.model.update(1 / 60);
-    return {
-      depression: api.model.keys.get('KeyO')?.depression ?? 0,
-      marks: api.document.marks.length,
-      queue: api.model.commandQueue.length,
-      strikes: api.model.activeStrikes.length,
-      machineAudioStarted: Boolean(api.audio.context),
-      roomAudioStarted: Boolean(api.atmosphereAudio.context),
-    };
-  });
-  invariant(
-    keyPreview.depression > 0.04
-      && keyPreview.marks === 0
-      && keyPreview.queue === 0
-      && keyPreview.strikes === 0
-      && !keyPreview.machineAudioStarted
-      && !keyPreview.roomAudioStarted,
-    `Landing key preview caused a mechanical side effect: ${JSON.stringify(keyPreview)}`,
-  );
-
+  const keyPreview = await page.evaluate(() => ({ enginePresent: Boolean(window.__OCTOBERLINE_211__), started: window.__OCTOBERLINE_LANDING__.started }));
+  invariant(!keyPreview.enginePresent && !keyPreview.started, 'Hover/focus must not start the 3D room.');
   await page.focus('#intro-guide');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.querySelector('#field-guide')?.open);
+  await page.waitForFunction(() => document.querySelector('#landing-guide')?.open);
   const preEntryGuide = await page.evaluate(() => ({
-    guideOpen: document.querySelector('#field-guide')?.open,
-    mechanicsSelected: document.querySelector('[data-tab="mechanics"]')?.getAttribute('aria-selected'),
-    mechanicsVisible: !document.querySelector('[data-page="mechanics"]')?.hidden,
-    landingDismissed: document.querySelector('#intro-overlay')?.classList.contains('dismissed'),
-    landingHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden'),
-    landingInert: document.querySelector('#intro-overlay')?.inert,
-    machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
-    roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
-    keyboardCaptured: window.__OCTOBERLINE_211__.keyboardCaptured,
-    marks: window.__OCTOBERLINE_211__.document.marks.length,
+    guideOpen: document.querySelector('#landing-guide').open,
+    content: document.querySelector('#landing-guide').textContent,
+    enginePresent: Boolean(window.__OCTOBERLINE_211__),
+    started: window.__OCTOBERLINE_LANDING__.started,
   }));
-  invariant(
-    preEntryGuide.guideOpen
-      && preEntryGuide.mechanicsSelected === 'true'
-      && preEntryGuide.mechanicsVisible
-      && !preEntryGuide.landingDismissed
-      && preEntryGuide.landingHidden === 'true'
-      && preEntryGuide.landingInert
-      && !preEntryGuide.machineAudioStarted
-      && !preEntryGuide.roomAudioStarted
-      && !preEntryGuide.keyboardCaptured
-      && preEntryGuide.marks === 0,
-    `Pre-entry field guide mismatch: ${JSON.stringify(preEntryGuide)}`,
-  );
+  invariant(preEntryGuide.guideOpen && preEntryGuide.content.includes('keyboard') && !preEntryGuide.enginePresent && !preEntryGuide.started,
+    `Lightweight guide mismatch: ${JSON.stringify(preEntryGuide)}`);
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => {
-    const guide = document.querySelector('#field-guide');
-    const landing = document.querySelector('#intro-overlay');
-    return !guide?.open
-      && landing?.getAttribute('aria-hidden') === 'false'
-      && !landing?.inert
-      && document.activeElement?.id === 'intro-guide';
-  });
-  const guideReturn = await page.evaluate(() => ({
-    focused: document.activeElement?.id,
-    landingHidden: document.querySelector('#intro-overlay')?.getAttribute('aria-hidden'),
-    landingInert: document.querySelector('#intro-overlay')?.inert,
-  }));
-  invariant(
-    guideReturn.focused === 'intro-guide' && guideReturn.landingHidden === 'false' && !guideReturn.landingInert,
-    `Pre-entry guide did not restore the landing: ${JSON.stringify(guideReturn)}`,
-  );
-
-  const entryStart = await page.evaluate(() => ({
-    position: window.__OCTOBERLINE_211__.camera.position.toArray(),
-    fov: window.__OCTOBERLINE_211__.camera.fov,
-  }));
+  const guideReturn = await page.evaluate(() => ({ focused: document.activeElement?.id, open: document.querySelector('#landing-guide').open }));
+  invariant(!guideReturn.open && guideReturn.focused === 'intro-guide', `Guide did not restore focus: ${JSON.stringify(guideReturn)}`);
   await enterSimulator(page);
   await page.waitForFunction(() => {
     const api = window.__OCTOBERLINE_211__;
@@ -199,8 +119,7 @@ try {
       && Math.abs(api.camera.position.z - 16.8) < 0.02
       && Math.abs(api.camera.fov - 43) < 0.02;
   });
-  const entry = await page.evaluate((before) => ({
-    before,
+  const entry = await page.evaluate(() => ({
     position: window.__OCTOBERLINE_211__.camera.position.toArray(),
     target: window.__OCTOBERLINE_211__.controls.target.toArray(),
     fov: window.__OCTOBERLINE_211__.camera.fov,
@@ -213,13 +132,9 @@ try {
     focused: document.activeElement?.id,
     machineAudioStarted: Boolean(window.__OCTOBERLINE_211__.audio.context),
     roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
-  }), entryStart);
+  }));
   invariant(
-    entry.before.position[0] >= 4.0 && entry.before.position[0] <= 5.25
-      && entry.before.position[1] >= 5.7 && entry.before.position[1] <= 6.2
-      && entry.before.position[2] >= 13.19 && entry.before.position[2] <= 14.61
-      && Math.abs(entry.before.fov - 37) < 0.02
-      && Math.abs(entry.position[0] - 1.2) < 0.02
+    Math.abs(entry.position[0] - 1.2) < 0.02
       && Math.abs(entry.position[1] - 5.7) < 0.02
       && Math.abs(entry.position[2] - 16.8) < 0.02
       && Math.abs(entry.target[0] - 1.65) < 0.02
@@ -541,7 +456,7 @@ try {
   const corruptPage = await corrupt.newPage();
   const corruptErrors = collectErrors(corruptPage);
   await corruptPage.goto(targetUrl, { waitUntil: 'networkidle' });
-  await corruptPage.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60_000 });
+  await enterStudio(corruptPage);
   const corruptPreset = await corruptPage.evaluate(() => window.__OCTOBERLINE_211__.model.getMechanicalSettings().touchPreset);
   invariant(corruptPreset === 'medium' && corruptErrors.length === 0, `Corrupt touch preset did not migrate safely: ${JSON.stringify({ corruptPreset, corruptErrors })}`);
   report.corruptPresetFallback = corruptPreset;

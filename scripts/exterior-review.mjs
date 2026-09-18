@@ -1,3 +1,4 @@
+import { enterStudio } from './browser-test-helpers.mjs';
 import { launchBrowser } from './browser-test-helpers.mjs';
 import { mkdir,writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -7,8 +8,8 @@ try {
  const page=await browser.newPage({viewport:{width:1600,height:1000}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.goto('http://127.0.0.1:5189/?quality=high',{waitUntil:'networkidle'});
- await page.waitForFunction(()=>window.__OCTOBERLINE_211__,null,{timeout:60000});
- await page.locator('#enter-studio').click();
+ await enterStudio(page);
+ await enterStudio(page);
  await page.evaluate(()=>{const a=window.__OCTOBERLINE_211__;a.room.configure({weather:'autumn-wind',unease:'off'});a.setView('front',0);});
  await page.waitForTimeout(2500);
  await page.screenshot({path:'visual-checks/exterior/front.png'});

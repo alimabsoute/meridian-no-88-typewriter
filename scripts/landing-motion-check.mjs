@@ -1,158 +1,188 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { launchBrowser } from './browser-test-helpers.mjs';
-
-const targetUrl = process.env.TARGET_URL || 'http://127.0.0.1:5189/';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { launchBrowser, enterStudio, ensurePreviewServer, DEFAULT_PREVIEW_URL } from './browser-test-helpers.mjs';
+const targetUrl = process.env.TARGET_URL || DEFAULT_PREVIEW_URL;
 const output = 'visual-checks/landing';
 await mkdir(output, { recursive: true });
-const browser = await launchBrowser();
-const results = { targetUrl, checkedAt: new Date().toISOString(), scenarios: [], errors: [] };
-
-async function open({ mobile = false, reduced = false } = {}) {
-  const context = await browser.newContext({
-    viewport: mobile ? { width: 390, height: 844 } : { width: 1600, height: 1000 },
-    reducedMotion: reduced ? 'reduce' : 'no-preference',
-    isMobile: mobile, hasTouch: mobile,
-  });
-  const page = await context.newPage();
-  page.on('pageerror', error => results.errors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') results.errors.push(message.text()); });
+const preview = await ensurePreviewServer({ targetUrl });
+const browser = await launchBrowser({ allowFileAccess: true });
+const report = { targetUrl, checkedAt: new Date().toISOString(), scenarios: [], errors: [] };
+async function instrument(page) {
+  page.on('pageerror', error => report.errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') report.errors.push(message.text()); });
   await page.addInitScript(() => {
-    window.__landingAudioConstructions = 0;
-    for (const name of ['AudioContext', 'webkitAudioContext']) {
-      if (window[name]) window[name] = new Proxy(window[name], {
-        construct(target, args) { window.__landingAudioConstructions += 1; return Reflect.construct(target, args); },
-      });
-    }
-  });
-  await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__), null, { timeout: 60000 });
-  return { context, page };
-}
-
-async function snapshot(page) {
-  return page.evaluate(() => {
-    const api = window.__OCTOBERLINE_211__;
-    const intro = document.querySelector('#intro-overlay');
-    return {
-      camera: api.camera.position.toArray(),
-      text: api.document.toPlainText(), paper: api.paperState,
-      audioConstructions: window.__landingAudioConstructions,
-      audioContextExists: Boolean(api.audio.context || api.atmosphereAudio.context),
-      introRunningAnimations: intro.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length,
-      dismissed: intro.classList.contains('dismissed'), keyboardCaptured: api.keyboardCaptured,
+    window.__landingProof = { audio: 0, webgl: 0 };
+    for (const name of ['AudioContext', 'webkitAudioContext']) if (window[name]) window[name] = new Proxy(window[name], {
+      construct(target, args) { window.__landingProof.audio++; return Reflect.construct(target, args); },
+    });
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (/webgl/i.test(type)) window.__landingProof.webgl++;
+      return getContext.call(this, type, ...args);
     };
   });
 }
-
-async function bounds(page) {
-  const value = await page.evaluate(() => ({
-    width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth,
-    buttons: ['enter-studio', 'intro-guide'].map(id => {
-      const element = document.getElementById(id);
-      const rect = element.getBoundingClientRect();
-      return { id, disabled: element.disabled, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
-    }),
-  }));
-  assert(value.documentWidth <= value.width + 1, 'Landing must not overflow horizontally');
-  for (const button of value.buttons) {
-    assert(!button.disabled, `${button.id} must be enabled before the cinematic settles`);
-    assert(button.width > 0 && button.height > 0 && button.x >= 0 && button.y >= 0 && button.right <= value.width + 1 && button.bottom <= value.height + 1,
-      `${button.id} must be within the viewport: ${JSON.stringify(button)}`);
+async function state(page) {
+  return page.evaluate(() => {
+    const intro = document.querySelector('#intro-overlay'), title = document.querySelector('#intro-title');
+    const css = getComputedStyle(title);
+    return {
+      title: title.textContent.trim(), titleVisible: css.visibility !== 'hidden' && Number(css.opacity) > 0 && title.getBoundingClientRect().height > 0,
+      status: window.__OCTOBERLINE_LANDING__?.status, started: window.__OCTOBERLINE_LANDING__?.started,
+      engine: Boolean(window.__OCTOBERLINE_211__), constructors: window.__landingProof,
+      width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth,
+      buttons: ['enter-studio','intro-guide'].map(id => {
+        const e = document.getElementById(id), r = e.getBoundingClientRect();
+        return { id, text: e.textContent.trim(), disabled: e.disabled, font: parseFloat(getComputedStyle(e).fontSize), x: r.x, right: r.right, height: r.height };
+      }),
+      animations: intro.getAnimations({ subtree: true }).filter(a => a.playState === 'running').length,
+      paperTransform: getComputedStyle(document.querySelector('.landing-paper')).transform,
+    };
+  });
+}
+function assertIdle(s) {
+  assert(s.titleVisible, 'Headline must paint without constructing the room');
+  assert.equal(s.status, 'idle'); assert.equal(s.started, false); assert.equal(s.engine, false);
+  assert.deepEqual(s.constructors, { audio: 0, webgl: 0 });
+  assert(s.scrollWidth <= s.width + 1, 'No horizontal scrolling');
+  for (const b of s.buttons) {
+    assert(!b.disabled && b.height >= 44 && b.x >= 0 && b.right <= s.width + 1, `${b.id} is readable and fits horizontally`);
+    assert(b.font >= (b.id === 'enter-studio' ? 20 : 18), `${b.id} has readable type`);
   }
-  return value;
 }
-
-async function enterAndType(page) {
-  const before = await snapshot(page);
-  const start = Date.now();
-  await page.locator('#enter-studio').click({ force: true });
-  await page.waitForFunction(() => window.__OCTOBERLINE_211__.keyboardCaptured && document.querySelector('#intro-overlay').classList.contains('dismissed'));
-  const entryMs = Date.now() - start;
-  // A real keyboard event follows entry; no debug typing API is used.
-  await page.keyboard.press('q');
-  await page.waitForFunction(text => window.__OCTOBERLINE_211__.document.toPlainText() !== text, before.text, { timeout: 15000 });
-  await page.waitForTimeout(1600);
-  const after = await snapshot(page);
-  assert(after.text.toLowerCase().includes('q'), 'Normal keyboard input must create a document mark');
-  assert.equal(after.introRunningAnimations, 0, 'Dismissed intro must not retain running CSS animations');
-  assert(after.audioConstructions > 0, 'Entry gesture should enable audio');
-  return { entryMs, textAfter: after.text, introRunningAnimations: after.introRunningAnimations, audioConstructions: after.audioConstructions };
+async function guide(page) {
+  await page.click('#intro-guide');
+  await page.waitForFunction(() => document.querySelector('#landing-guide').open);
+  assert.equal(await page.evaluate(() => Boolean(window.__OCTOBERLINE_211__)), false);
+  assert.match(await page.locator('#landing-guide').innerText(), /keyboard/i);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'intro-guide');
+  assertIdle(await state(page));
 }
-
+async function typeAfterEntry(page, text) {
+  await enterStudio(page);
+  await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__.status === 'ready');
+  await page.keyboard.type(text, { delay: 90 });
+  await page.waitForFunction(text => window.__OCTOBERLINE_211__.document.toPlainText().includes(text), text, { timeout: 15000 });
+  const result = await page.evaluate(() => ({ text: window.__OCTOBERLINE_211__.document.toPlainText(), captured: window.__OCTOBERLINE_211__.keyboardCaptured, status: window.__OCTOBERLINE_LANDING__.status, constructors: window.__landingProof }));
+  assert(result.constructors.webgl > 0 && result.captured);
+  return result;
+}
 try {
-  // Test entry before arrival finishes on a fresh page.
-  {
-    const { context, page } = await open();
-    const initial = await snapshot(page);
-    assert.equal(initial.audioConstructions, 0);
-    assert.equal(initial.audioContextExists, false);
-    const layout = await bounds(page);
-    const entry = await enterAndType(page);
-    results.scenarios.push({ name: 'immediate-entry', layout, entry });
-    await context.close();
+  // Serve actual production HTML as two chunks. The simulator tail is withheld,
+  // so a painted, working guide and queued entry cannot depend on that bundle.
+  const html = await readFile('dist/index.html');
+  let releaseTail;
+  const tail = new Promise(resolve => { releaseTail = resolve; });
+  const server = createServer(async (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.write(html.subarray(0, 30000));
+    await tail;
+    res.end(html.subarray(30000));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  try {
+    const page = await context.newPage(); await instrument(page);
+    await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: 'commit' });
+    await page.locator('#intro-title').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_LANDING__));
+    const partial = await state(page); assertIdle(partial); await guide(page);
+    // Playwright waits for document.fonts.ready, which cannot settle while this
+    // HTML response is intentionally open. Capture the actual partial paint.
+    const capture = await context.newCDPSession(page);
+    const painted = await capture.send('Page.captureScreenshot', { format: 'png' });
+    await writeFile(`${output}/partial-stream-first-paint.png`, Buffer.from(painted.data, 'base64'));
+    await capture.detach();
+    await page.click('#enter-studio');
+    const queued = await state(page); assert.equal(queued.status, 'loading'); assert(queued.started && !queued.engine); assert.equal(queued.constructors.webgl, 0);
+    assert(await page.locator('#intro-load-status').innerText());
+    assert.equal(await page.locator('#enter-studio').getAttribute('aria-busy'), 'true');
+    assert(await page.locator('#intro-guide').isDisabled(), 'Guide must not interrupt room loading');
+    assert.equal(await page.locator('#landing-guide').evaluate(e => e.open), false);
+    releaseTail(); await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__?.keyboardCaptured), null, { timeout: 60000 });
+    const entered = await typeAfterEntry(page, 'Stream proof.');
+    report.scenarios.push({ name: 'first-30000-bytes-streamed', partial, queued, entered });
+  } finally { releaseTail(); await context.close(); await new Promise(resolve => server.close(resolve)); }
+
+  for (const [name, width, height, reduced] of [
+    ['desktop',1600,1000,false], ['mobile',390,844,false], ['small-mobile',320,740,false], ['short-landscape',844,390,false],
+    ['desktop-reduced',1600,1000,true], ['mobile-reduced',390,844,true],
+  ]) {
+    const context = await browser.newContext({ viewport: { width, height }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
+    const page = await context.newPage(); await instrument(page);
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_LANDING__));
+    const first = await state(page); assertIdle(first);
+    await page.screenshot({ path: `${output}/${name}-initial.png`, fullPage: true });
+    // Short viewports may cull offscreen compositor work. Observe the paper
+    // in view, then require its rendered transform to advance normally.
+    await page.locator('.landing-paper').evaluate(e => e.scrollIntoView({ block: 'center' }));
+    const motionStart = await state(page);
+    if (reduced) await page.waitForTimeout(300);
+    else await page.waitForFunction(transform => getComputedStyle(document.querySelector('.landing-paper')).transform !== transform, motionStart.paperTransform);
+    const next = await state(page); assertIdle(next);
+    if (reduced) { assert.equal(next.animations, 0); assert.equal(next.paperTransform, motionStart.paperTransform); }
+    else { assert(next.animations > 0); assert.notEqual(next.paperTransform, motionStart.paperTransform, 'CSS paper animation must actually advance'); }
+    await guide(page);
+    for (const button of ['#enter-studio', '#intro-guide']) { await page.locator(button).scrollIntoViewIfNeeded(); assert(await page.locator(button).isVisible()); }
+    await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
+    const entry = name === 'mobile' ? await typeAfterEntry(page, 'Mobile proof.') : undefined;
+    report.scenarios.push({ name, first, next, entry }); await context.close();
   }
-  {
-    const { context, page } = await open();
-    const initial = await snapshot(page);
-    const frames = await page.evaluate(() => new Promise(resolve => {
-      requestAnimationFrame(() => {
-        const first = window.__OCTOBERLINE_211__.camera.position.toArray();
-        requestAnimationFrame(() => resolve({ first, second: window.__OCTOBERLINE_211__.camera.position.toArray() }));
-      });
-    }));
-    assert.notDeepEqual(frames.first, frames.second, 'Actual rendered camera frames must move during arrival');
-    await page.waitForFunction(() => window.__OCTOBERLINE_211__.camera.position.z < 13.201, null, { timeout: 30000 });
-    await page.waitForTimeout(4200); // Includes the second silent key-preview interval.
-    const settled = await snapshot(page);
-    assert.deepEqual(settled.paper, initial.paper, 'Silent preview must preserve the full paper lifecycle');
-    assert.equal(settled.text, initial.text, 'Silent preview must not type');
-    assert.equal(settled.audioConstructions, 0, 'Landing must construct no audio context');
-    await page.mouse.move(120, 500);
-    await page.waitForTimeout(1000);
-    const left = (await snapshot(page)).camera;
-    await page.mouse.move(1480, 500);
-    await page.waitForTimeout(1000);
-    const right = (await snapshot(page)).camera;
-    assert(right[0] - left[0] > .1, 'Pointer movement should produce visible, bounded camera parallax');
-    const layout = await bounds(page);
-    await page.screenshot({ path: `${output}/desktop.png` });
-    results.scenarios.push({ name: 'desktop-arrival-and-parallax', frames, left, right, layout, documentPreserved: true, paperPreserved: true, audioConstructions: settled.audioConstructions, entry: await enterAndType(page) });
-    await context.close();
-  }
-  for (const mobile of [false, true]) {
-    const { context, page } = await open({ mobile, reduced: true });
-    const initial = await snapshot(page);
-    await page.waitForTimeout(1700);
-    await page.mouse.move(mobile ? 320 : 1400, 380);
-    await page.waitForTimeout(500);
-    const after = await snapshot(page);
-    assert.deepEqual(after.camera, initial.camera, 'Reduced-motion camera must remain fixed');
-    assert.deepEqual(after.paper, initial.paper);
-    assert.equal(after.text, initial.text);
-    assert.equal(after.introRunningAnimations, 0, 'Reduced motion must disable intro CSS animation');
-    assert.equal(after.audioConstructions, 0);
-    const layout = await bounds(page);
-    await page.screenshot({ path: `${output}/${mobile ? 'mobile' : 'desktop'}-reduced.png` });
-    results.scenarios.push({ name: `${mobile ? 'mobile' : 'desktop'}-reduced-motion`, layout, staticCamera: true, runningIntroAnimations: after.introRunningAnimations, entry: await enterAndType(page) });
-    await context.close();
-  }
-  {
-    const { context, page } = await open({ mobile: true });
-    const layout = await bounds(page);
-    await page.waitForTimeout(2300);
-    await page.screenshot({ path: `${output}/mobile.png` });
-    results.scenarios.push({ name: 'mobile-motion', layout, entry: await enterAndType(page) });
-    await context.close();
-  }
-  assert.deepEqual(results.errors, [], 'All landing scenarios must have zero browser errors');
-  results.passed = true;
-} catch (error) {
-  results.passed = false;
-  results.failure = error.stack;
-  throw error;
-} finally {
-  await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
-  console.log(JSON.stringify(results, null, 2));
+  // Critical HTML/CSS remains readable even when no JavaScript can execute.
+  const noJs = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  const noJsPage = await noJs.newPage(); await noJsPage.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+  assert(await noJsPage.locator('#intro-title').isVisible()); assert(await noJsPage.locator('#enter-studio').isVisible());
+  await noJsPage.screenshot({ path: `${output}/no-javascript-first-paint.png`, fullPage: true });
+  report.scenarios.push({ name: 'no-javascript-readable', passed: true }); await noJs.close();
+  // A simulator parse/load failure before entry must not strand the CTA.
+  const failedModule = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const failedPage = await failedModule.newPage();
+  const moduleErrors = [];
+  failedPage.on('pageerror', error => moduleErrors.push(error.message));
+  await failedPage.route(targetUrl, async route => {
+    const response = await route.fetch();
+    const html = (await response.text()).replace(/<script\b[^>]*type="module"[^>]*>[\s\S]*?<\/script>/, '<script type="module">throw new Error("Intentional simulator module failure")</script>');
+    await route.fulfill({ response, body: html });
+  });
+  await failedPage.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+  await failedPage.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.bootError);
+  assert(await failedPage.locator('#intro-title').isVisible());
+  await failedPage.click('#enter-studio');
+  await failedPage.waitForFunction(() => window.__OCTOBERLINE_LANDING__.status === 'error');
+  assert.equal(await failedPage.evaluate(() => Boolean(window.__OCTOBERLINE_211__)), false);
+  assert(await failedPage.locator('#enter-studio').isEnabled());
+  assert(await failedPage.locator('#intro-load-status').innerText());
+  assert.deepEqual(moduleErrors, ['Intentional simulator module failure']);
+  report.scenarios.push({ name: 'pre-entry-module-error-retry', passed: true });
+  await failedModule.close();
   await browser.close();
-}
+  const fallbackBrowser = await launchBrowser({ disableWebgl: true });
+  try {
+    const page = await fallbackBrowser.newPage({ viewport: { width: 390, height: 844 } });
+    const expectedErrors = [];
+    page.on('pageerror', error => expectedErrors.push(error.message));
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+    await page.click('#enter-studio');
+    await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.status === 'error', null, { timeout: 30000 });
+    const errorState = await page.evaluate(() => ({
+      status: window.__OCTOBERLINE_LANDING__.status, engine: Boolean(window.__OCTOBERLINE_211__),
+      message: document.querySelector('#intro-load-status').textContent,
+      retryEnabled: !document.querySelector('#enter-studio').disabled,
+    }));
+    assert.equal(errorState.engine, false); assert(errorState.retryEnabled); assert.match(errorState.message, /WebGL 2/i);
+    await page.click('#intro-guide'); assert(await page.locator('#landing-guide').evaluate(e => e.open)); await page.keyboard.press('Escape');
+    await page.screenshot({ path: `${output}/webgl-error-retry.png`, fullPage: true });
+    await page.click('#enter-studio');
+    await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.status === 'idle');
+    assert.equal(await page.evaluate(() => Boolean(window.__OCTOBERLINE_211__)), false);
+    assert(expectedErrors.every(message => /WebGL/i.test(message)), `Unexpected fallback errors: ${expectedErrors}`);
+    report.scenarios.push({ name: 'webgl-error-retry', errorState, expectedErrors, reloadRecoveredIdle: true });
+  } finally { await fallbackBrowser.close(); }
+  assert.deepEqual(report.errors, []);
+  report.passed = true;
+} catch(error) { report.passed = false; report.failure = error.stack; throw error; }
+finally { await writeFile(`${output}/results.json`, JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2)); await browser.close(); await preview.close(); }
