@@ -15,7 +15,69 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    name: Verify ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CHROME_PATH: /usr/bin/google-chrome
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - name: units
+            script: test
+          - name: interaction
+            script: test:interaction
+          - name: visual
+            script: test:visual
+          - name: performance
+            script: test:performance
+          - name: landing
+            script: test:landing
+          - name: room-decor
+            script: test:room-decor
+          - name: release-ui
+            script: test:release-ui
+          - name: workbench
+            script: test:workbench
+          - name: offline
+            script: test:offline
+          - name: community-preview
+            script: test:community-preview
+          - name: writing-board-preview
+            script: test:writing-board-preview
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and verify release package
+        run: npm run build:release
+
+      - name: Run ${{ matrix.name }} checks
+        run: npm run ${{ matrix.script }}
+
+      - name: Save structured check evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: checks-${{ matrix.name }}
+          path: visual-checks/**/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   build:
+    needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -36,8 +98,8 @@ jobs:
       - name: Confirm browser runtime
         run: google-chrome --version
 
-      - name: Run complete release verification
-        run: npm run verify
+      - name: Build verified release
+        run: npm run build:release
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

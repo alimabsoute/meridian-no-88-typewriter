@@ -598,17 +598,52 @@ await page.evaluate((visible) => {
   window.__OCTOBERLINE_211__.model.scene.visible = visible;
 }, backgroundSceneWasVisible);
 await page.bringToFront();
-const averageFrameMs = await page.evaluate(() => new Promise((resolve) => {
-  let frames = 0;
-  let first = 0;
-  function sample(now) {
-    if (!first) first = now;
-    frames += 1;
-    if (frames >= 60) resolve((now - first) / (frames - 1));
-    else requestAnimationFrame(sample);
-  }
-  requestAnimationFrame(sample);
-}));
+// This full-scene sample is telemetry only. Use a ten-second sampling deadline
+// so slow software rendering does not turn the frame target into minutes of waiting.
+let sceneSampleDeadline;
+const sceneFrameSample = await Promise.race([
+  page.evaluate(() => new Promise((resolve) => {
+    const targetFrames = 60;
+    const budgetMs = 10_000;
+    const startedAt = performance.now();
+    let frames = 0;
+    let first = null;
+    let last = null;
+    let frameId = 0;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      cancelAnimationFrame(frameId);
+      resolve({
+        sampleCount: frames,
+        targetFrames,
+        completedTarget: frames >= targetFrames,
+        budgetMs,
+        durationMs: performance.now() - startedAt,
+        averageFrameMs: frames > 1 ? (last - first) / (frames - 1) : null,
+      });
+    };
+    const timer = setTimeout(finish, budgetMs);
+    function sample(now) {
+      if (finished) return;
+      first ??= now;
+      last = now;
+      frames += 1;
+      if (frames >= targetFrames || performance.now() - startedAt >= budgetMs) finish();
+      else frameId = requestAnimationFrame(sample);
+    }
+    frameId = requestAnimationFrame(sample);
+  })),
+  // A renderer that cannot deliver even its timer result should fail with a
+  // bounded diagnostic instead of leaving the Node process awaiting evaluation.
+  new Promise((_, reject) => {
+    sceneSampleDeadline = setTimeout(() => reject(new Error('Full-scene RAF telemetry did not return within 15000ms')), 15_000);
+  }),
+]).finally(() => clearTimeout(sceneSampleDeadline));
+const averageFrameMs = sceneFrameSample.averageFrameMs;
+console.log(`INFO: full-scene RAF telemetry ${JSON.stringify(sceneFrameSample)}`);
 
 // GitHub's headless SwiftShader can spend seconds rasterizing this 600-object
 // scene. Isolate the real-time mechanics gate from GPU throughput; rendered
@@ -1074,36 +1109,92 @@ await storageFailureContext.addInitScript(deterministicRandom);
 const storageFailurePage = await storageFailureContext.newPage();
 const storageFailureErrors = collectErrors(storageFailurePage);
 let storageFailureState;
+async function readStorageFailureState() {
+  return storageFailurePage.evaluate(() => {
+    const api = window.__OCTOBERLINE_211__;
+    const warning = document.getElementById('archive-warning');
+    const audit = window.__OCTOBERLINE_211_STORAGE_AUDIT__;
+    return {
+      warning: warning?.textContent ?? null,
+      warningVisible: Boolean(warning && !warning.hidden
+        && getComputedStyle(warning).visibility !== 'hidden' && warning.getClientRects().length),
+      text: api?.document.toPlainText() ?? null,
+      inserted: Boolean(api?.lifecycle.getOverview().insertedSheet),
+      captured: api?.keyboardCaptured ?? null,
+      focused: document.activeElement?.id ?? null,
+      queue: api?.model.commandQueue.map(({ type, code }) => ({ type, code })) ?? null,
+      activeStrikes: api?.model.activeStrikes.map(({ type, code, phase }) => ({ type, code, phase })) ?? null,
+      failedWrites: audit?.failedWrites ?? [],
+      warningMutations: audit?.warningMutations ?? [],
+    };
+  });
+}
 try {
   await waitForSimulator(storageFailurePage);
   await enterStudio(storageFailurePage);
+  const entryState = await readStorageFailureState();
+  if (!entryState.captured || entryState.focused !== 'scene' || !entryState.inserted || entryState.text !== '') {
+    throw new Error(`Storage failure input precondition mismatch: ${JSON.stringify(entryState)}`);
+  }
   await storageFailurePage.evaluate(() => {
     const originalSetItem = Storage.prototype.setItem;
-    window.__OCTOBERLINE_211_RESTORE_STORAGE__ = () => { Storage.prototype.setItem = originalSetItem; };
-    Storage.prototype.setItem = () => { throw new DOMException('Quota exhausted by test', 'QuotaExceededError'); };
+    const warning = document.getElementById('archive-warning');
+    const startedAt = performance.now();
+    const audit = { failedWrites: [], warningMutations: [] };
+    window.__OCTOBERLINE_211_STORAGE_AUDIT__ = audit;
+    const recordWarning = () => audit.warningMutations.push({
+      atMs: performance.now() - startedAt,
+      text: warning.textContent,
+      hidden: warning.hidden,
+    });
+    const observer = new MutationObserver(recordWarning);
+    observer.observe(warning, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    recordWarning();
+    window.__OCTOBERLINE_211_RESTORE_STORAGE__ = () => {
+      observer.disconnect();
+      Storage.prototype.setItem = originalSetItem;
+      delete window.__OCTOBERLINE_211_STORAGE_AUDIT__;
+      delete window.__OCTOBERLINE_211_RESTORE_STORAGE__;
+    };
+    Storage.prototype.setItem = (key) => {
+      audit.failedWrites.push({ key: String(key), atMs: performance.now() - startedAt });
+      throw new DOMException('Quota exhausted by test', 'QuotaExceededError');
+    };
   });
   await storageFailurePage.keyboard.type('z');
   await settleKeyboardModel(storageFailurePage, []);
+  const typedState = await readStorageFailureState();
+  if (typedState.text !== 'z') {
+    throw new Error(`Storage failure keyboard delivery mismatch: ${JSON.stringify(typedState)}`);
+  }
+  // The persistent warning is inside Paper. Open it through the real toolbar
+  // after proving typing worked, so visibility includes its parent panel.
+  await openWorkbench(storageFailurePage, 'paper');
   await storageFailurePage.waitForFunction(
-    () => document.getElementById('archive-warning')?.textContent.includes('LOCAL ARCHIVE IS FULL'),
+    () => {
+      const warning = document.getElementById('archive-warning');
+      return warning && !warning.hidden && getComputedStyle(warning).visibility !== 'hidden'
+        && warning.getClientRects().length > 0
+        && warning.textContent.includes('LOCAL ARCHIVE IS FULL')
+        && warning.textContent.includes('EXPORT THIS SHEET');
+    },
     null,
-    { timeout: 5000 },
+    { timeout: 5000, polling: 100 },
   );
-  storageFailureState = await storageFailurePage.evaluate(() => ({
-    warning: document.getElementById('archive-warning')?.textContent,
-    warningVisible: !document.getElementById('archive-warning')?.hidden,
-    text: window.__OCTOBERLINE_211__.document.toPlainText(),
-    inserted: Boolean(window.__OCTOBERLINE_211__.lifecycle.getOverview().insertedSheet),
-  }));
+  storageFailureState = { ...await readStorageFailureState(), entryState, typedState };
   if (
     !storageFailureState.warningVisible
     || !storageFailureState.warning.includes('EXPORT THIS SHEET')
     || storageFailureState.text !== 'z'
     || !storageFailureState.inserted
+    || !storageFailureState.failedWrites.length
     || storageFailureErrors.length
   ) {
     throw new Error(`Storage failure warning mismatch: ${JSON.stringify({ storageFailureState, storageFailureErrors })}`);
   }
+} catch (error) {
+  const diagnostics = await readStorageFailureState().catch((diagnosticError) => ({ unavailable: diagnosticError.message }));
+  throw new Error(`Storage failure scenario failed: ${JSON.stringify({ diagnostics, storageFailureErrors })}`, { cause: error });
 } finally {
   await storageFailurePage.evaluate(() => window.__OCTOBERLINE_211_RESTORE_STORAGE__?.()).catch(() => {});
   await storageFailureContext.close();
@@ -1149,8 +1240,9 @@ for (const [label, quality, expectedQuality] of [
 
 process.stdout.write(`${JSON.stringify({
   ok: true,
+  sceneFrameSample,
   averageFrameMs,
-  approximateFps: Math.round(1000 / averageFrameMs),
+  approximateFps: averageFrameMs > 0 ? Math.round(1000 / averageFrameMs) : null,
   latency,
   burstFrameCadence,
   wallClockMechanicsGate,
