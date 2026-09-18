@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TypewriterDocument } from './typewriter-document.js';
 import { TypewriterModel } from './typewriter-model.js';
-import { createLandingAssemblyParts, disposeLandingScene, startLandingAssembly } from './landing-assembly.js';
+import { createLandingAnimationClock, createLandingAssemblyParts, disposeLandingScene, startLandingAssembly } from './landing-assembly.js';
 
 function canvasDocument() {
   const gradient = { addColorStop() {} };
@@ -90,6 +90,36 @@ describe('real model landing assembly', () => {
     assembly.setTime(0);
     assembly.setTime(4.6);
     expect(assembly.getRestError()).toBeLessThan(1e-12);
+  });
+
+  it('finishes the actual model entrance in the same visible time at smooth, stalled and one-frame-per-second cadences', () => {
+    const smoothFrames = [...Array.from({ length: 276 }, (_, index) => index * 1000 / 60), 4600];
+    for (const timestamps of [smoothFrames, [0, 1000, 2000, 3000, 4000, 4600], [0, 16, 33, 3100, 4600]]) {
+      const clock = createLandingAnimationClock();
+      for (const timestamp of timestamps) assembly.setTime(clock.advance(timestamp));
+      expect(assembly.parts.every(part => part.progress === 1)).toBe(true);
+      expect(assembly.getRestError()).toBeLessThan(1e-12);
+    }
+  });
+
+  it('holds the separated model while a tab is hidden and resumes only its remaining visible duration', () => {
+    const clock = createLandingAnimationClock();
+    clock.advance(0);
+    assembly.setTime(clock.advance(1000));
+    const beforePause = assembly.getRestError();
+    const progressBeforePause = assembly.parts.map(part => part.progress);
+    clock.pause();
+    // Returning after a minute in another tab must not finish the entrance.
+    assembly.setTime(clock.advance(61000));
+    expect(assembly.getRestError()).toBe(beforePause);
+    expect(assembly.parts.map(part => part.progress)).toEqual(progressBeforePause);
+    assembly.setTime(clock.advance(64600));
+    expect(assembly.parts.every(part => part.progress === 1)).toBe(true);
+    expect(assembly.getRestError()).toBeLessThan(1e-12);
+    clock.reset();
+    assembly.setTime(clock.advance(100000));
+    expect(assembly.parts.every(part => part.progress === 0)).toBe(true);
+    expect(assembly.getRestError()).toBeGreaterThan(1);
   });
 
   it('disposes all 13 instanced allocations and hidden studio geometry exactly once per resource', () => {

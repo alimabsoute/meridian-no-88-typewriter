@@ -30,8 +30,11 @@ async function instrument(page) {
     };
   });
 }
-async function state(page) {
-  return page.evaluate(() => {
+async function state(page, { replay = false } = {}) {
+  return page.evaluate(replay => {
+    // Capture the replay baseline in the same browser task as its reset. A
+    // separate CDP round trip can observe an already-finished short animation.
+    const replayed = replay ? window.__OCTOBERLINE_LANDING__.assembly.replay() : undefined;
     const intro = document.querySelector('#intro-overlay'), title = document.querySelector('#intro-title');
     const css = getComputedStyle(title);
     return {
@@ -39,6 +42,7 @@ async function state(page) {
       status: window.__OCTOBERLINE_LANDING__?.status, started: window.__OCTOBERLINE_LANDING__?.started,
       engine: Boolean(window.__OCTOBERLINE_211__), constructors: window.__landingProof,
       preview: window.__OCTOBERLINE_LANDING__?.assembly?.getState() ?? null,
+      replayed,
       previewCanvases: document.querySelectorAll('#landing-assembly canvas').length,
       contexts: window.__landingContextRecords?.map(({ canvas, context }) => ({ connected: canvas.isConnected, lost: context.isContextLost() })) ?? [],
       width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth,
@@ -48,7 +52,7 @@ async function state(page) {
       }),
       animations: intro.getAnimations({ subtree: true }).filter(a => a.playState === 'running').length,
     };
-  });
+  }, replay);
 }
 function assertIdle(s, { beforeBundle = false } = {}) {
   assert(s.titleVisible, 'Headline must paint without constructing the room');
@@ -228,14 +232,32 @@ try {
     // ResizeObserver may submit one initial static frame; let that settle before
     // checking that the reduced-motion preview has no continuously running loop.
     if (reduced) await page.waitForTimeout(200);
-    else assert(await page.evaluate(() => window.__OCTOBERLINE_LANDING__.assembly.replay()));
-    const motionStart = await state(page); assertRenderedPreview(motionStart, { reduced });
+    const motionStart = await state(page, { replay: !reduced }); assertRenderedPreview(motionStart, { reduced });
+    if (!reduced) {
+      assert(motionStart.replayed);
+      assert.equal(motionStart.preview.progress, 0);
+      assert(motionStart.preview.restTransformError > 1e-3, 'Replay must actually separate the machine from its assembled pose');
+    }
     if (reduced) await page.waitForTimeout(350);
-    else await page.waitForFunction(previous => {
-      const current = window.__OCTOBERLINE_LANDING__.assembly.getState();
-      return current.progress > previous.progress && current.frameCount > previous.frameCount
-        && current.restTransformError !== previous.restTransformError;
-    }, motionStart.preview, { timeout: 30000 });
+    else {
+      try {
+        await page.waitForFunction(previous => {
+          const current = window.__OCTOBERLINE_LANDING__.assembly.getState();
+          // The largest remaining displacement belongs to the paper, which
+          // deliberately waits for its stagger. That maximum can stay constant
+          // while casting and key rows move. Observe those authored groups and
+          // actual render submissions here; require exact transform parity at
+          // completion below instead of timing an unrelated aggregate maximum.
+          return current.progress > previous.progress && current.frameCount > previous.frameCount
+            && current.groups.some((group, index) => group.progress > previous.groups[index].progress);
+        }, motionStart.preview, { timeout: 30000 });
+      } catch (error) {
+        const stalled = await state(page);
+        const compact = preview => preview ? { ...preview, renderTimeline: preview.renderTimeline?.slice(-12) } : null;
+        report.motionFailure = { scenario: name, start: compact(motionStart.preview), current: compact(stalled.preview), contexts: stalled.contexts };
+        throw new Error(`Preview groups did not advance: ${JSON.stringify(report.motionFailure)}`, { cause: error });
+      }
+    }
     const next = await state(page); assertRenderedPreview(next, { reduced });
     if (reduced) {
       assert.equal(next.animations, 0);
@@ -243,7 +265,7 @@ try {
       assert(next.preview.restTransformError < 1e-8);
     } else {
       assert(next.preview.progress > motionStart.preview.progress);
-      assert.notEqual(next.preview.restTransformError, motionStart.preview.restTransformError, 'Actual model transforms must coalesce');
+      assert(next.preview.groups.some((group, index) => group.progress > motionStart.preview.groups[index].progress), 'Authored assembly groups must advance');
     }
     await guide(page);
     for (const button of ['#enter-studio', '#intro-guide']) { await page.locator(button).scrollIntoViewIfNeeded(); assert(await page.locator(button).isVisible()); }
@@ -254,8 +276,8 @@ try {
     if (name === 'mobile') {
       // A real CTA click during a fresh assembly must synchronously retire the
       // preview before keyboard, paper, audio and the complete room initialize.
-      assert(await page.evaluate(() => window.__OCTOBERLINE_LANDING__.assembly.replay()));
-      const duringAssembly = await state(page);
+      const duringAssembly = await state(page, { replay: true });
+      assert(duringAssembly.replayed);
       assert.equal(duringAssembly.preview.phase, 'assembling');
       assert(duringAssembly.preview.progress < 1);
       entry = await typeAfterEntry(page, 'Mobile proof.');
@@ -266,12 +288,20 @@ try {
       finalPose = await state(page);
       assert.equal(finalPose.preview.progress, 1);
       assert(finalPose.preview.restTransformError < 1e-8, 'Coalescence must restore every original transform and key instance');
+      if (!reduced) assert(finalPose.preview.restTransformError < motionStart.preview.restTransformError, 'Rendered assembly must close the actual separated transforms');
       assert(finalPose.preview.groups.every(group => group.progress === 1));
       if (name === 'desktop') {
+        await page.evaluate(() => {
+          document.querySelector('#replay-assembly').addEventListener('click', () => {
+            window.__landingUiReplayState = window.__OCTOBERLINE_LANDING__.assembly.getState();
+          }, { once: true });
+        });
         await page.locator('#replay-assembly').click();
         replay = await state(page);
-        assert.equal(replay.preview.phase, 'assembling');
-        assert(replay.preview.progress < 1 && replay.preview.restTransformError > 0);
+        replay.clickState = await page.evaluate(() => window.__landingUiReplayState);
+        assert.equal(replay.clickState.phase, 'assembling');
+        assert.equal(replay.clickState.progress, 0);
+        assert(replay.clickState.restTransformError > 1e-3);
       }
     }
     report.scenarios.push({ name, first, motionStart, next, finalPose, replay, entry }); await context.close();

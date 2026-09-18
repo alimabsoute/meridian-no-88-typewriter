@@ -12,6 +12,30 @@ const smooth = (value) => {
   return t * t * t * (t * (t * 6 - 15) + 10);
 };
 
+// Presentation tweens depend on visible wall time, not the number of frames a
+// GPU can deliver. A slow frame must not turn this brief entrance into minutes.
+// Restart the time origin after a pause so hidden-tab time never advances it.
+export function createLandingAnimationClock() {
+  let origin = null;
+  let pausedElapsed = 0;
+  let elapsed = 0;
+  return {
+    advance(timestamp) {
+      origin ??= timestamp;
+      elapsed = pausedElapsed + Math.max(0, timestamp - origin) / 1000;
+      return elapsed;
+    },
+    pause() {
+      pausedElapsed = elapsed;
+      origin = null;
+    },
+    reset(seconds = 0) {
+      pausedElapsed = elapsed = seconds;
+      origin = null;
+    },
+  };
+}
+
 // These are presentation carriers around the existing authored model. No
 // machine geometry, materials, key records, or mechanical code is duplicated.
 export function createLandingAssemblyParts(model) {
@@ -248,7 +272,7 @@ export function startLandingAssembly({ container, landing }) {
   let idle = 0;
   let timer = 0;
   let elapsed = 0;
-  let lastTime = null;
+  const animationClock = createLandingAnimationClock();
   let lastRender = -Infinity;
   let frameCount = 0;
   let firstRenderAt = null;
@@ -326,7 +350,7 @@ export function startLandingAssembly({ container, landing }) {
   const stopFrame = () => {
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
-    lastTime = null;
+    animationClock.pause();
   };
   const updateCamera = () => {
     if (!camera) return;
@@ -353,8 +377,7 @@ export function startLandingAssembly({ container, landing }) {
     if (cancelled()) return dispose();
     if (document.hidden || reducedMotion) return;
     try {
-      if (lastTime !== null) elapsed += Math.min(0.1, Math.max(0, (time - lastTime) / 1000));
-      lastTime = time;
+      elapsed = animationClock.advance(time);
       if (phase === 'assembling') {
         assembly.setTime(elapsed);
         if (elapsed >= ASSEMBLY_SECONDS) {
@@ -403,6 +426,7 @@ export function startLandingAssembly({ container, landing }) {
     if (!assembly || disposed) return;
     stopFrame();
     elapsed = Math.max(elapsed, ASSEMBLY_SECONDS);
+    animationClock.reset(elapsed);
     assembly.setTime(ASSEMBLY_SECONDS);
     setPhase(reducedMotion ? 'static' : 'complete');
     try {
@@ -471,6 +495,7 @@ export function startLandingAssembly({ container, landing }) {
     if (disposed || !assembly || !renderer || cancelled()) return false;
     stopFrame();
     elapsed = reducedMotion ? ASSEMBLY_SECONDS : 0;
+    animationClock.reset(elapsed);
     assembly.setTime(elapsed);
     setPhase(reducedMotion ? 'static' : 'assembling');
     renderer.shadowMap.autoUpdate = true;
@@ -570,6 +595,7 @@ export function startLandingAssembly({ container, landing }) {
       if (cancelled()) return dispose();
       reducedMotion = motionQuery?.matches ?? false;
       elapsed = reducedMotion ? ASSEMBLY_SECONDS : 0;
+      animationClock.reset(elapsed);
       assembly.setTime(elapsed);
       setPhase(reducedMotion ? 'static' : 'assembling');
       render();
