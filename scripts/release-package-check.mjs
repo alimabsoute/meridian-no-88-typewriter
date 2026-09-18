@@ -18,6 +18,7 @@ const expectedPreviewRuntime = [
   'coming-soon/writing-board/board.js',
   'coming-soon/release-manifest.json',
 ];
+const expectedRoomMedia = ['media/philly-tv.mp4', 'media/philly-tv-poster.jpg', 'media/philly-wall-art.png'];
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -52,11 +53,11 @@ invariant(rootContents.equals(standaloneContents), 'The named standalone artifac
 
 const archive = await readFile(webPackagePath);
 const archiveEntries = listZipEntries(archive);
-for (const relative of ['index.html', BRAND.releaseArtifactFilename, ...expectedPreviewRuntime]) {
+for (const relative of ['index.html', BRAND.releaseArtifactFilename, ...expectedPreviewRuntime, ...expectedRoomMedia]) {
   invariant(archiveEntries.includes(relative), `Web ZIP is missing ${relative}`);
 }
 const forbiddenArchiveEntries = archiveEntries.filter((file) => (
-  file.endsWith('.png') || file.endsWith('/smoke.mjs') || file === BRAND.releaseWebPackageFilename
+  (file.endsWith('.png') && !expectedRoomMedia.includes(file)) || file.endsWith('/smoke.mjs') || file === BRAND.releaseWebPackageFilename
 ));
 invariant(!forbiddenArchiveEntries.length, `Web ZIP contains excluded files: ${forbiddenArchiveEntries.join(', ')}`);
 invariant(archiveEntries.some((file) => file.endsWith('bebas-neue-latin-400-normal.woff2')), 'Bebas Neue font is missing');

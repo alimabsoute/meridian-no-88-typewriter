@@ -1,51 +1,97 @@
-# Immediate landing and deferred writing room
+# Immediate landing, optional assembly and deferred writing room
 
-The September 2026 opening replaces the previous full-scene camera/key preview.
-The headline and controls no longer wait for a GPU frame. The visitor sees a
-paper animation, an actual 42.9 KB render of the machine, and a clear start action:
-“Start typing on the typewriter now.” The supporting promise is “No sign-in.
-No credit cards. Completely free.”
+## Current implementation direction — September 18, 2026
+
+This revision restores the application's charcoal, aged-brass, Bebas Neue and
+Special Elite identity and the original headline, “A room for the next page.”
+The readable entry action remains “Start typing on the typewriter now,” with
+“No sign-in. No credit cards. Completely free.” The guide remains available
+without starting the full simulator. This describes the working revision;
+publication and final passing checks must be established by its release record.
+
+The flat machine image and animated-paper composition from the earlier
+September 18 release are replaced by an optional preview of the actual modeled
+typewriter. Twenty-one groups coalesce over 4.6 seconds. Entry does not require
+waiting for the assembly to finish.
 
 ## Startup boundary
 
-- `src/landing.css` supplies critical styles with system fonts. Headline and
-  controls are visible without JavaScript, images, custom fonts, or WebGL.
+- `src/landing.css` supplies critical styling so the headline and controls paint
+  before the full application is ready. Font fallbacks retain readable content
+  while the intended Bebas Neue/Special Elite faces become available.
 - `src/landing-bootstrap.js` runs before the large simulator payload. It opens
-  the lightweight guide, queues early entry, reports progress/errors, and unlocks
-  silent audio contexts inside the real user gesture.
-- `scripts/landing-shell-plugin.mjs` inlines that small shell and moves the large
-  single-file runtime after visible content. Callback replacements preserve
-  literal JavaScript replacement tokens such as `$&`.
-- `src/main.js` awaits the explicit entry request before restoring archives or
-  constructing the renderer, room, reflection map, or typewriter. Initialization
-  yields between stages so the progress message can paint. The existing audio
-  engines adopt the gesture-unlocked contexts.
-- The room compiles shaders and renders its Front view before the opening fades.
-  There is no mandatory camera movie or silent one-key preview to wait through.
+  the independent guide, queues early entry, reports progress/errors, and primes
+  silent audio contexts inside the explicit entry gesture.
+- `scripts/landing-shell-plugin.mjs` inlines the small shell and places the large
+  single-file runtime after visible content. Callback replacement preserves
+  literal JavaScript replacement tokens; LF normalization keeps HTML builds
+  comparable across platforms.
+- `src/landing-assembly.js` can create an isolated renderer and real typewriter
+  model for the optional assembly. This is pre-entry WebGL, not a full room or
+  a static image. It does not restore archives or initialize audio/full-room
+  state. A preview failure must leave the readable entry path available.
+- Before constructing the live room, the preview is disposed so its graphics
+  resources and animation loop do not remain alongside the writing experience.
+- `src/main.js` waits for explicit entry before restoring archives and creating
+  the full room and live mechanics. Staged initialization lets progress paint;
+  audio engines adopt the contexts primed by that user gesture.
+- The room prepares its Front view before the landing crossfade. The earlier
+  silent one-key preview is not a required step in entry.
 
-The standalone HTML still contains the entire simulator. This change improves
-first visibility and eliminates idle 3D work; it does not claim that the complete
-room is a smaller download or that full-scene frame rate is fixed on every device.
-The detailed city, PECO/Cira animation, document lifecycle, mechanical behavior,
-and exports remain in their existing modules.
+The full simulator remains in the standalone HTML. Optional preview rendering
+means the earlier claim of zero pre-entry WebGL no longer applies. The archive,
+audio and full room still remain behind explicit entry. Earlier CSS-only landing
+cadence measurements are historical and must not be reused as assembly FPS.
 
-## Failure and accessibility behavior
+## Philadelphia wall decor and media
 
-Reduced motion disables paper, typing, and shimmer animation. Both entry actions
-are native keyboard-accessible buttons with visible focus treatment. The guide
-is available before initialization. Loading disables repeat entry and guide
-reopening; errors restore a readable retry and keep the page visible. Failed
-decorative images do not prevent entry. WebGL failure is explained within the
-landing rather than replacing it with an empty canvas.
+`src/room-decor.js` adds a slim television on the left wall and Philadelphia
+paintings on the right, with media deferred until the room is entered. The TV
+loops a silent local edit of circa-1955 Philadelphia footage from the specific
+public-domain Prelinger item *Miracle on the Delaware*. It is archival footage,
+not a current broadcast. Source attribution, segments, rights and checksums are
+in [the media provenance note](philly-media-sources.md).
 
-## Verification
+The television can be switched off, and `tvPlaying` preserves that preference.
+Room pause and reduced-motion handling govern playback. The original generated
+oil-painting diptych depicts the Rocky statue/Museum steps and Boathouse Row;
+its adjacent source note retains prompt provenance. These additions do not
+replace the existing skyline, PECO/Cira animation, mechanical or paper systems.
 
-`npm run test:landing` serves the actual built HTML in two chunks, withholding
-everything after the first 30 KB. It checks visible content, zero WebGL/audio
-construction before entry, guide operation, and a queued early click. It also
-checks desktop/mobile/short-screen layout, real CSS movement, reduced motion,
-entry and typing, no-JavaScript readability, and recoverable startup errors.
+## Offline and packaging boundary
 
-The normal interaction, release UI, workbench, visual, performance, and offline
-checks use an entry-first helper and wait for the real simulator API. They do
-not use a mock readiness object. The landing check is part of `npm run verify`.
+The core simulator remains usable from an ordinary double-clicked HTML file.
+Under `file://`, decor deterministically makes no video, poster or painting
+requests: the television is dark and artwork uses linen fallbacks. Placing the
+media folder beside the HTML does not enable media in that mode, and special
+browser file-access flags are not required or recommended for ordinary use.
+
+For optional media without internet access, serve the extracted web ZIP over
+HTTP on localhost, keeping its `media/` folder intact. The video, poster and
+paintings are separate local assets, not embedded in the standalone HTML. HTTP
+room entry may request those local assets; direct-file core behavior and HTTP
+media playback are separate validation paths.
+## Accessibility and recovery
+
+The entry actions are native keyboard-accessible buttons with visible focus.
+Reduced motion suppresses decorative motion, including the assembly treatment,
+and the room's decor observes its pause/reduced-motion settings. The guide is
+independent of full simulator readiness. Entry loading and retry controls retain
+readable progress/error feedback. Failure of the optional preview or media must
+not be confused with failure of the core writing interface.
+
+## Verification boundary
+
+The landing checks exercise the real built HTML and early streamed shell,
+readable controls/guide, queued entry, desktop/mobile bounds, motion preferences,
+actual typing and recoverable failures. Assembly tests additionally need to
+cover model transforms, completion, disposal and entry handoff. Pre-entry checks
+must distinguish the allowed optional preview renderer from prohibited early
+archive/audio/full-room initialization.
+
+Room/decor checks cover playback controls, persisted preference, pause/reduced
+motion and disposal. Packaging/offline checks distinguish the core single-file
+simulator from optional adjacent media. The normal interaction, release UI,
+workbench, visual and performance checks continue to use the actual simulator
+API. Test descriptions are requirements and available coverage, not a claim
+that the current revision has passed its full release checks or is published.

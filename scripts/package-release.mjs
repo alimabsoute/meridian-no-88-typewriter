@@ -32,6 +32,7 @@ const contents = await readFile(destination);
 const sha256 = createHash('sha256').update(contents).digest('hex');
 
 const packagedDirectories = [
+  ['media', path.resolve('dist/media')],
   ['coming-soon', path.resolve('dist/coming-soon')],
   ['node_modules', path.resolve('dist/node_modules')],
 ];

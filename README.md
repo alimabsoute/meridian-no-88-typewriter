@@ -8,9 +8,9 @@ An enthusiast-grade, browser-based simulation of a late-1930s manual typewriter 
 
 ## September 2026 update
 
-The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact. The opening now shows a lightweight animated page and the actual machine immediately, with larger start/guide controls; the 3D room starts after entry. See [landing architecture](docs/immediate-landing.md), [earlier release evidence](docs/releases/2026-09-13/), and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
+The living Philadelphia exterior includes animated Cira lights, the preserved PECO crown, detailed masonry, moving trees and settling leaves. The compact workbench and paper mechanics remain intact. Mechanical key audio has a stronger layered impact. The current working revision restores the original charcoal/brass typography and headline, with an optional 21-group assembly of the actual typewriter over 4.6 seconds, readable start/guide controls, and a full room that starts after entry. It also adds a slim archival Philadelphia TV and wall paintings. These new changes await their own final release verification and publication record. See [landing architecture](docs/immediate-landing.md), [earlier release evidence](docs/releases/2026-09-13/), and [the twelve architectural concepts](design-review/philadelphia-window-concepts/index.html).
 
-## Earlier release status
+## Earlier release status — August 2026 historical record
 
 The package version remains `0.2.0` while the next release is prepared on
 `codex/octoberline-phases-0-5`. Phases 0–5 and the honest Phase 6–7 previews are
@@ -38,8 +38,8 @@ See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the evidence boundary and [the ro
 - Adjustable carriage margin stops, configurable tabs, and Light/Medium/Heavy touch
 - Quiet Writing Mode, explicit input state, first-sheet coaching, compact mobile
   camera/mechanics controls, and independently pausable atmosphere
-- A lightweight opening with animated paper, a readable shimmering start button,
-  a pre-entry guide, and a prepared first frame before the writing room appears
+- A readable opening with an optional real-typewriter assembly, a shimmering start button,
+  an independent pre-entry guide, and disposal of the preview before the full room starts
 - A fixed Philadelphia writing room with Clear Dusk, Autumn Wind, Steady Rain,
   First Snow, and Nor'easter presets
 - Independent machine, paper, room, weather, and optional unease audio controls
@@ -51,9 +51,12 @@ Open the production experience at [octoberline211.com](https://octoberline211.co
 
 Once this branch is committed, merged, and published, download
 `Octoberline-211-Typewriter.html` from [Releases](https://github.com/alimabsoute/meridian-no-88-typewriter/releases),
-double-click it, and enter the machine. The standalone file makes no network
-requests and needs a current WebGL 2 browser with graphics acceleration.
-
+double-click it, and enter the machine. The core simulator works offline in one HTML
+file and needs a current WebGL 2 browser with graphics acceleration. Ordinary
+`file://` use deliberately makes no video, poster or painting requests and shows
+a dark TV and linen artwork fallbacks, even if a media folder is adjacent. To use
+the optional media offline, serve the extracted web ZIP over HTTP on localhost
+with its `media/` folder intact. No special browser file-access flags are needed.
 ### Controls
 
 - Type normally to operate the matching modeled keys.
@@ -83,7 +86,7 @@ Complete release validation is one command:
 npm run verify
 ```
 
-`verify` runs 115 unit tests, builds and checks both release packages, exercises
+`verify` runs the unit suite, builds and checks both release packages, exercises
 mechanics, paper persistence, Phase 1–5 UI and exports, proves direct-file/offline
 behavior, checks default and high quality, measures structural and CPU budgets,
 regenerates the 15-view simulator matrix, and validates both coming-soon previews.
@@ -97,7 +100,7 @@ Verification treats browser input handling, deterministic mechanics timing, and 
 
 The Pages build is `dist/index.html`, with preview-only Phase 6 and 7 routes at
 `dist/coming-soon/community/` and `dist/coming-soon/writing-board/`. The build
-keeps the simulator self-contained while copying only those pages' runtime CSS,
+keeps the core simulator self-contained, includes optional room media, and copies those pages' runtime CSS,
 JavaScript, procedural artwork, and local font files; review screenshots and test
 scripts are excluded.
 
@@ -131,7 +134,9 @@ The fictional Octoberline 211 combines documented manual-typewriter mechanisms w
 - [The Lighting Practice Crown Lights study](https://www.thelightingpractice.com/project/peco-crown-lights/)
 
 The PECO Building scene is an original procedural landmark study. No source
-photographs or video frames are bundled, and Octoberline 211 is not affiliated
+photographs or video frames are used for that landmark model. The optional room TV
+separately includes public-domain archival footage documented in
+[Philadelphia media sources](docs/philly-media-sources.md). Octoberline 211 is not affiliated
 with or endorsed by PECO.
 
 ## Publishing

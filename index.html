@@ -26,33 +26,28 @@
       <section class="intro-overlay ui-layer" id="intro-overlay" aria-labelledby="intro-title" aria-describedby="intro-description">
         <header class="landing-masthead">
           <span class="landing-brand">Octoberline <b>211</b></span>
-          <span class="landing-edition">A writing room in Philadelphia</span>
+          <span class="landing-edition">MBS WORKS · PHILADELPHIA</span>
         </header>
         <div class="landing-layout">
           <div class="intro-content">
-            <span class="intro-index">A little less noise. A little more you.</span>
-            <h1 id="intro-title">Your words.<em>Their own rhythm.</em></h1>
-            <p class="intro-description" id="intro-description">Feel every keystroke. Hear the carriage return. Find your words in a living Philadelphia writing room.</p>
+            <span class="intro-index">PHILADELPHIA · EARLY EVENING</span>
+            <h1 id="intro-title"><span>A room for</span> <span>the next page.</span></h1>
+            <p class="intro-description" id="intro-description">The weight of a key. The sound of a thought.<br>A quiet place to turn your words into something real.</p>
             <div class="intro-actions">
               <button class="enter-button" id="enter-studio" type="button" aria-describedby="intro-free intro-load-status">
-                <span class="enter-label">Start typing on the typewriter now</span><i aria-hidden="true">↗</i>
+                <span class="enter-label">Start typing on the typewriter now</span><i aria-hidden="true">→</i>
               </button>
               <p class="intro-free" id="intro-free">No sign-in. No credit cards. <strong>Completely free.</strong></p>
               <button class="intro-guide-button" id="intro-guide" type="button">See how it works <span aria-hidden="true">↗</span></button>
             </div>
             <p id="intro-load-status" role="status" aria-live="polite" aria-atomic="true"></p>
           </div>
-          <div class="landing-stage" aria-hidden="true">
-            <div class="landing-paper">
-              <span class="paper-dateline">PHILADELPHIA, PENNSYLVANIA</span>
-              <div class="paper-writing"><span>Dear blank page,</span><span class="paper-typed">let’s make something</span><span class="paper-typed">worth keeping.</span></div>
-              <span class="paper-signature">One word at a time.</span>
-            </div>
-            <img class="landing-machine" src="/src/assets/landing-typewriter.webp" width="1100" height="900" alt="" fetchpriority="high" />
-            <span class="landing-specimen-note">Your desk. Your pace.</span>
+          <div class="landing-stage">
+            <div id="landing-assembly" aria-hidden="true"></div>
+            <div class="landing-stage-caption"><span>Steel. Ink. Possibility.</span><button id="replay-assembly" type="button" aria-label="Replay the typewriter assembly animation">Replay assembly <span aria-hidden="true">↺</span></button></div>
           </div>
         </div>
-        <footer class="landing-footer"><span>Made for the pleasure of writing.</span><span>Write freely · Keep your pages · Export your work</span></footer>
+        <footer class="landing-footer"><span>THE CITY IS AWAKE.<i></i>THE PAGE IS YOURS.</span><span>Keep your pages · Export your work</span></footer>
         <noscript><p>Please enable JavaScript to use the interactive typewriter.</p></noscript>
       </section>
 
@@ -184,6 +179,7 @@
             </label>
           </div>
           <button class="atmosphere-pause" id="atmosphere-pause" type="button" aria-pressed="false"><span>ATMOSPHERE MOTION</span><b>RUNNING</b></button>
+          <button class="atmosphere-pause" id="tv-toggle" type="button" aria-pressed="true"><span>PHILADELPHIA FILM ARCHIVE</span><b>ON · SILENT</b></button>
           <details class="audio-mix">
             <summary>AUDIO MIX</summary>
             <label><span>Machine</span><input id="machine-volume" type="range" min="0" max="1" step="0.01" /></label>

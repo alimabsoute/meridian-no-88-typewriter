@@ -18,11 +18,17 @@ import { PaperLifecycleView } from './paper-lifecycle-view.js';
 import { PhiladelphiaWritingRoom } from './philadelphia-writing-room.js';
 import { AtmosphereAudio } from './atmosphere-audio.js';
 import { BRAND, formatSheetExportFilename } from './brand.js';
+import { startLandingAssembly } from './landing-assembly.js';
 
 const landing = window.__OCTOBERLINE_LANDING__;
-// The HTML opening has its own tiny controller. No archive, canvas, reflection,
-// skyline, or typewriter is constructed until the visitor asks to write.
+// The readable shell paints first. Only an isolated, silent machine preview
+// runs here; the archive and the Philadelphia room still wait for entry.
+const landingAssembly = startLandingAssembly({ container: document.querySelector('#landing-assembly'), landing });
+landing.assembly = landingAssembly;
+document.querySelector('#replay-assembly').addEventListener('click', () => landingAssembly.replay());
 await landing.entry;
+// Finish releasing the preview before the live renderer acquires model assets.
+landingAssembly.dispose();
 async function paintLoadingStage(message) {
   landing.progress(message);
   await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
@@ -221,6 +227,8 @@ const room = new PhiladelphiaWritingRoom({
   eveningProgress: 0.24,
   brightness: 1.22,
   reducedMotion: reducedMotionQuery.matches,
+  tvPlaying: stored?.tvPlaying !== false,
+  paused: stored?.atmospherePaused === true,
   seed: 88,
 });
 
@@ -277,6 +285,7 @@ let inspectionEnabled = false;
 let paperActionBusy = false;
 let quietModeEnabled = stored?.quietModeEnabled === true;
 let atmospherePaused = stored?.atmospherePaused === true;
+let tvPlaying = stored?.tvPlaying !== false;
 let quietIdleTimer = 0;
 let selectedPaperId = null;
 const paperThumbnailCache = new Map();
@@ -529,6 +538,7 @@ function persist() {
         uneaseMode: room.uneaseLevel,
         quietModeEnabled,
         atmospherePaused,
+        tvPlaying,
         touchPreset: model.getTouchCalibration().preset,
       }));
     } catch {
@@ -1205,6 +1215,13 @@ syncInkUi();
 refs['sound-toggle'].setAttribute('aria-pressed', String(audio.enabled));
 
 function syncAtmosphereUi() {
+  room.decor.setTVPlaying(tvPlaying);
+  room.decor.setPaused(atmospherePaused);
+  const tvToggle = document.getElementById('tv-toggle');
+  tvToggle.setAttribute('aria-pressed', String(tvPlaying));
+  tvToggle.querySelector('b').textContent = !tvPlaying ? 'OFF'
+    : room.decor.localFileMode ? 'LOCAL SERVER REQUIRED'
+      : atmospherePaused || reducedMotionQuery.matches ? 'PAUSED' : 'ON · SILENT';
   refs['weather-select'].value = room.weatherPreset === 'automatic' ? 'quiet' : room.weatherPreset;
   refs['unease-select'].value = room.uneaseLevel;
   refs['machine-volume'].value = String(audio.volume);
@@ -1228,6 +1245,12 @@ function syncAtmosphereUi() {
 }
 
 syncAtmosphereUi();
+document.getElementById('tv-toggle').addEventListener('click', () => {
+  tvPlaying = !tvPlaying;
+  syncAtmosphereUi();
+  persist();
+  showToast(tvPlaying ? 'PHILADELPHIA ARCHIVE · SILENT FILMS' : 'TELEVISION OFF', 1000);
+});
 setQuietMode(quietModeEnabled, { persistState: false });
 syncInputStatus();
 
@@ -1832,6 +1855,7 @@ reducedMotionQuery.addEventListener?.('change', (event) => {
   room.setReducedMotion(event.matches);
   model.reducedMotion = event.matches;
   paperView.reducedMotion = event.matches;
+  syncAtmosphereUi();
 });
 
 const mobileInput = document.getElementById('mobile-input');

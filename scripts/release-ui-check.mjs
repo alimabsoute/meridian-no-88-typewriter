@@ -279,6 +279,13 @@ try {
   invariant(quiet.enabled && !quiet.faded && !quiet.captured && quiet.inputStatus === 'INPUT RELEASED', `Quiet-mode recovery mismatch: ${JSON.stringify(quiet)}`);
 
   await openWorkbench(page, 'room');
+  // Leave the intentional eight-second PECO introduction before testing resume.
+  // Software GPUs can take minutes to accumulate that much simulation time.
+  // The frame change below still comes from the real running animation loop.
+  await page.evaluate(() => {
+    const room = window.__OCTOBERLINE_211__.room;
+    if (room.elapsed < 9) room.update(0, 9);
+  });
   await page.click('#atmosphere-pause');
   const paused = await page.evaluate(async () => {
     const before = window.__OCTOBERLINE_211__.room.elapsed;

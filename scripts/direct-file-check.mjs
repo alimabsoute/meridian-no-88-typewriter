@@ -9,7 +9,8 @@ await access(buildPath);
 const targetUrl = `${pathToFileURL(buildPath).href}?quality=low`;
 
 async function verifyStandaloneFile() {
-  const browser = await launchBrowser({ allowFileAccess: true });
+  // Ordinary double-click security: optional external media falls back locally.
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage({ viewport: { width: 960, height: 640 } });
     page.setDefaultTimeout(60000);
@@ -46,7 +47,7 @@ async function verifyStandaloneFile() {
 }
 
 async function verifyWebglFallback() {
-  const browser = await launchBrowser({ allowFileAccess: true, disableWebgl: true });
+  const browser = await launchBrowser({ disableWebgl: true });
   try {
     const page = await browser.newPage({ viewport: { width: 960, height: 640 } });
     await page.goto(targetUrl, { waitUntil: 'load' });

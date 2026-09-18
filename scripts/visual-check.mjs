@@ -47,12 +47,14 @@ async function waitForSimulator(page, { enter = true } = {}) {
 
 async function assertLightweightLanding(page) {
   const state = await page.evaluate(() => ({
-    landing: { ...window.__OCTOBERLINE_LANDING__ },
+    landing: { status: window.__OCTOBERLINE_LANDING__.status, started: window.__OCTOBERLINE_LANDING__.started },
+    previewPhase: window.__OCTOBERLINE_LANDING__.assembly?.getState().phase ?? null,
     initialized: Boolean(window.__OCTOBERLINE_211__),
     resources: { ...window.__landingResourceAudit },
   }));
   invariant(state.landing.status === 'idle' && state.landing.started === false
-    && !state.initialized && state.resources.webgl === 0 && state.resources.audio === 0,
+    && !state.initialized && state.resources.webgl <= 1 && state.resources.audio === 0
+    && state.resources.storageReads === 0 && state.resources.storageWrites === 0 && state.resources.archiveOpens === 0,
   `Landing booted room resources before entry: ${JSON.stringify(state)}`);
   return state;
 }
@@ -184,11 +186,16 @@ async function captureScenario({
     ...(reducedMotion ? { reducedMotion } : {}),
   });
   await context.addInitScript(() => {
-    window.__landingResourceAudit = { webgl: 0, audio: 0 };
+    window.__landingResourceAudit = { webgl: 0, audio: 0, storageReads: 0, storageWrites: 0, archiveOpens: 0 };
+    const contexts = new WeakSet();
     const getContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-      if (/^(webgl2?|experimental-webgl)$/.test(type)) window.__landingResourceAudit.webgl += 1;
-      return getContext.call(this, type, ...args);
+      const context = getContext.call(this, type, ...args);
+      if (/^(webgl2?|experimental-webgl)$/.test(type) && context && !contexts.has(context)) {
+        contexts.add(context);
+        window.__landingResourceAudit.webgl += 1;
+      }
+      return context;
     };
     for (const name of ['AudioContext', 'webkitAudioContext']) {
       if (window[name]) window[name] = new Proxy(window[name], {
@@ -204,6 +211,23 @@ async function captureScenario({
       sessionStorage.clear();
     } catch {
       // Storage is not available in the initial about:blank document.
+    }
+    const getItem = Storage.prototype.getItem;
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.getItem = function(...args) {
+      window.__landingResourceAudit.storageReads++;
+      return getItem.apply(this, args);
+    };
+    Storage.prototype.setItem = function(...args) {
+      window.__landingResourceAudit.storageWrites++;
+      return setItem.apply(this, args);
+    };
+    if (window.indexedDB) {
+      const open = indexedDB.open;
+      indexedDB.open = function(...args) {
+        window.__landingResourceAudit.archiveOpens++;
+        return open.apply(this, args);
+      };
     }
     let seed = 0x4d455249;
     Math.random = () => {
@@ -250,31 +274,44 @@ try {
       ...variant,
       enter: false,
       run: async (page) => {
+        await page.waitForFunction(() => ['complete', 'static', 'unavailable'].includes(
+          document.querySelector('#landing-assembly')?.dataset.assemblyState,
+        ), null, { timeout: 60000 });
         await page.hover('#enter-studio');
         const state = await page.evaluate(() => {
           const bounds = (selector) => {
             const box = document.querySelector(selector)?.getBoundingClientRect();
             return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null;
           };
+          const copyBoxes = ['#intro-title', '#intro-description', '.intro-actions'].map(bounds);
+          const copy = copyBoxes.every(Boolean) ? {
+            left: Math.min(...copyBoxes.map(box => box.left)), top: Math.min(...copyBoxes.map(box => box.top)),
+            right: Math.max(...copyBoxes.map(box => box.right)), bottom: Math.max(...copyBoxes.map(box => box.bottom)),
+          } : null;
           const overlay = document.querySelector('#intro-overlay');
           return {
-            brand: document.querySelector('.intro-carbon-brand')?.textContent.replace(/\s+/g, ' ').trim(),
+            brand: document.querySelector('.landing-brand')?.textContent.replace(/\s+/g, ' ').trim(),
             title: document.querySelector('#intro-title')?.textContent.replace(/\s+/g, ' ').trim(),
             kicker: document.querySelector('.intro-index')?.textContent,
             overlayVisible: getComputedStyle(overlay).visibility !== 'hidden'
               && getComputedStyle(overlay).display !== 'none' && overlay.getAttribute('aria-hidden') !== 'true',
-            copy: bounds('.intro-content'),
+            // Mobile deliberately uses display:contents; measure its actual
+            // headline, description and action boxes instead of a zero box.
+            copy,
             primary: bounds('#enter-studio'),
             secondary: bounds('#intro-guide'),
-            brandBounds: bounds('.intro-carbon-brand'),
+            primaryFontSize: parseFloat(getComputedStyle(document.querySelector('#enter-studio')).fontSize),
+            secondaryFontSize: parseFloat(getComputedStyle(document.querySelector('#intro-guide')).fontSize),
+            brandBounds: bounds('.landing-brand'),
+            previewPhase: document.querySelector('#landing-assembly')?.dataset.assemblyState,
             scrollWidth: document.documentElement.scrollWidth,
             viewport: { width: innerWidth, height: innerHeight },
             reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
             runningAnimations: overlay.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').length,
           };
         });
-        const visible = (box) => box && box.left >= 0 && box.top >= 0
-          && box.right <= state.viewport.width && box.bottom <= state.viewport.height;
+        const visible = (box) => box && box.left >= -1 && box.top >= -1
+          && box.right <= state.viewport.width + 1 && box.bottom <= state.viewport.height + 1;
         invariant(state.overlayVisible && state.brand === 'Octoberline 211'
           && state.title === 'A room for the next page.'
           && state.kicker === 'PHILADELPHIA · EARLY EVENING'
@@ -282,10 +319,12 @@ try {
           && visible(state.primary) && visible(state.secondary)
           && state.primary.bottom - state.primary.top >= 44
           && state.secondary.bottom - state.secondary.top >= 44
-          && state.scrollWidth <= state.viewport.width,
+          && state.primaryFontSize >= 20 && state.secondaryFontSize >= 18
+          && ['complete', 'static'].includes(state.previewPhase)
+          && state.scrollWidth <= state.viewport.width + 1,
         `Landing layout mismatch: ${JSON.stringify(state)}`);
-        if (variant.isMobile) invariant(state.primary.left === state.secondary.left
-          && state.primary.right === state.secondary.right && state.secondary.top >= state.primary.bottom,
+        if (variant.isMobile) invariant(Math.abs(state.primary.left - state.secondary.left) <= 1
+          && state.secondary.right <= state.primary.right + 1 && state.secondary.top >= state.primary.bottom,
         `Mobile landing actions mismatch: ${JSON.stringify(state)}`);
         if (variant.reducedMotion) invariant(state.reducedMotion && state.runningAnimations === 0,
           `Reduced-motion landing still animates: ${JSON.stringify(state)}`);

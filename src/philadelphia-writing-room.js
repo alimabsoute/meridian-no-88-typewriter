@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createLivingPhiladelphia } from './living-philadelphia.js';
+import { PhiladelphiaRoomDecor } from './room-decor.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   AdaptiveQualityGovernor,
@@ -283,8 +284,8 @@ function setTransform(object, {
 
 /**
  * A fixed-view Philadelphia rowhouse writing room. This module owns no camera,
- * controls, navigation, DOM, storage, or audio. It can therefore be mounted
- * behind the typewriter without entering the latency-critical typing path.
+ * controls, navigation, storage, or audio. Its independent decor module owns a
+ * muted video element, outside the latency-critical typing path.
  */
 export class PhiladelphiaWritingRoom {
   constructor({
@@ -296,6 +297,8 @@ export class PhiladelphiaWritingRoom {
     eveningProgress = 0.38,
     brightness = 1,
     reducedMotion = false,
+    tvPlaying = true,
+    paused = false,
     seed = 88,
     position = null,
     onAtmosphereEvent = null,
@@ -360,6 +363,7 @@ export class PhiladelphiaWritingRoom {
     this._buildLighting();
     this.livingCity = createLivingPhiladelphia(this);
     this._bindRealPecoDisplay();
+    this.decor = new PhiladelphiaRoomDecor({ parent: this.root, reducedMotion: this.reducedMotion, tvPlaying, paused });
 
     this.effectiveQuality = this.qualityMode === 'auto' ? this._chooseInitialQuality() : this.qualityMode;
     this.qualityGovernor = new AdaptiveQualityGovernor(this.effectiveQuality);
@@ -1719,6 +1723,7 @@ export class PhiladelphiaWritingRoom {
 
   setReducedMotion(enabled) {
     this.reducedMotion = Boolean(enabled);
+    this.decor?.setReducedMotion(this.reducedMotion);
     if (this.reducedMotion) {
       this.uneaseSignal = 0;
       this.previousUneaseSignal = 0;
@@ -1732,6 +1737,7 @@ export class PhiladelphiaWritingRoom {
 
   setVisible(visible) {
     this.root.visible = Boolean(visible);
+    this.decor?.setVisible(this.root.visible);
     return this.root.visible;
   }
 
@@ -1747,6 +1753,7 @@ export class PhiladelphiaWritingRoom {
       brightness: this.brightness,
       reducedMotion: this.reducedMotion,
       stationary: true,
+      decor: this.decor?.getState(),
       pecoCrown: {
         name: 'PECO Crown Lights',
         message: 'PHILADELPHIA WRITES TONIGHT / OCTOBERLINE 211',
@@ -1762,6 +1769,7 @@ export class PhiladelphiaWritingRoom {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.decor?.dispose();
     // Instance attributes have their own WebGL buffers; geometry disposal does
     // not release them. Dispatch each mesh's disposal before dropping the room.
     this.root.traverse((object) => {
