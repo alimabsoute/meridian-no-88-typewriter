@@ -1,0 +1,37 @@
+name: Verify live production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fresh-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CHROME_PATH: /usr/bin/google-chrome
+      TARGET_URL: https://octoberline211.com/
+      ROOM_CHECK_OUTPUT: visual-checks/production/assembly-room
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the checked-out release
+        run: npm run build:release
+      - name: Verify production asset parity
+        run: node scripts/production-assets-check.mjs
+      - name: Check the live room in a fresh browser
+        run: node scripts/assembly-room-check.mjs
+      - name: Save browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-browser-evidence
+          path: visual-checks/production/
+          if-no-files-found: warn
+          retention-days: 14

@@ -32,8 +32,12 @@ async function decorState() {
 try {
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('load', { timeout: 30000 });
-  await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.assembly?.getState().phase === 'assembling', null, { timeout: 60000 });
-  const early = await page.evaluate(() => window.__OCTOBERLINE_LANDING__.assembly.getState());
+  await page.waitForFunction(() => ['assembling', 'complete'].includes(window.__OCTOBERLINE_LANDING__?.assembly?.getState().phase), null, { timeout: 60000 });
+  const early = await page.evaluate(() => {
+    const assembly = window.__OCTOBERLINE_LANDING__.assembly;
+    if (assembly.getState().phase === 'complete') assembly.replay();
+    return assembly.getState();
+  });
   await page.screenshot({ path: `${output}/desktop-assembling.png` });
   await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__.assembly.getState().phase === 'complete', null, { timeout: 60000 });
   const complete = await page.evaluate(() => window.__OCTOBERLINE_LANDING__.assembly.getState());
