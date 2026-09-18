@@ -64,10 +64,30 @@ async function typeAfterEntry(page, text) {
   await enterStudio(page);
   await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__.status === 'ready');
   await page.keyboard.type(text, { delay: 90 });
-  await page.waitForFunction(text => window.__OCTOBERLINE_211__.document.toPlainText().includes(text), text, { timeout: 15000 });
+  // Prove actual keyboard delivery through the normal mechanical queue. This
+  // landing regression does not certify software-rendered CI frame cadence.
+  const mechanics = await page.evaluate(() => {
+    const { model, document: sheet } = window.__OCTOBERLINE_211__;
+    const before = sheet.toPlainText();
+    for (let step = 0; step < 128; step++) {
+      if (!model.returning && !model.tabMotion && !model.activeStrikes.length && !model.commandQueue.length) return { settled: true, step, before };
+      model.update(0.04);
+    }
+    return { settled: false, before, queue: model.commandQueue.length, active: model.activeStrikes.length };
+  });
+  assert(mechanics.settled, `Real typing queue did not settle: ${JSON.stringify(mechanics)}`);
+  try {
+    await page.waitForFunction(text => window.__OCTOBERLINE_211__.document.toPlainText().includes(text), text, { timeout: 15000 });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => {
+      const api = window.__OCTOBERLINE_211__;
+      return { actualText: api.document.toPlainText(), focused: document.activeElement?.id, captured: api.keyboardCaptured, status: window.__OCTOBERLINE_LANDING__.status, queue: api.model.commandQueue, active: api.model.activeStrikes };
+    });
+    throw new Error(`Entry typing failed: ${JSON.stringify({ expected: text, mechanics, diagnostic })}`, { cause: error });
+  }
   const result = await page.evaluate(() => ({ text: window.__OCTOBERLINE_211__.document.toPlainText(), captured: window.__OCTOBERLINE_211__.keyboardCaptured, status: window.__OCTOBERLINE_LANDING__.status, constructors: window.__landingProof }));
   assert(result.constructors.webgl > 0 && result.captured);
-  return result;
+  return { ...result, mechanics };
 }
 try {
   // Serve actual production HTML as two chunks. The simulator tail is withheld,

@@ -2,6 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { landingShellPlugin } from './landing-shell-plugin.mjs';
 
 describe('streamable standalone landing', () => {
+  it('produces the same shell from Windows and Unix checkouts', () => {
+    const html = '<html>\n<!-- LANDING_STYLE -->\n<body>\n<!-- LANDING_BOOTSTRAP -->\n</body></html>';
+    const transform = landingShellPlugin().transformIndexHtml.handler;
+    expect(transform(html.replaceAll('\n', '\r\n'))).toBe(transform(html));
+    expect(transform(html)).not.toContain('\r');
+  });
+
   it('moves the simulator after the visible shell without interpolating its JavaScript', () => {
     const script = '<script type="module">const template = "$& $` $\' $$";</script>';
     const critical = '<style id="landing-critical">.intro{color:gold}</style>';

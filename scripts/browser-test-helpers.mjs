@@ -10,10 +10,15 @@ export const DEFAULT_PREVIEW_URL = 'http://127.0.0.1:4177/';
 // The room intentionally does not exist until the visitor chooses to enter.
 // Keep the established startup deadline; do not fake or eagerly load its API.
 export async function enterStudio(page, { timeout = 60_000 } = {}) {
-  if (!await page.evaluate(() => Boolean(window.__OCTOBERLINE_211__))) {
+  const initial = await page.evaluate(() => ({ api: Boolean(window.__OCTOBERLINE_211__), started: window.__OCTOBERLINE_LANDING__?.started }));
+  if (!initial.api && !initial.started) {
     await page.locator('#enter-studio').click();
   }
-  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__?.keyboardCaptured), null, { timeout });
+  // A recovered loose sheet intentionally leaves keyboard capture released.
+  // Entry readiness is the actual room plus completed overlay dismissal.
+  await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__)
+    && window.__OCTOBERLINE_LANDING__?.status === 'ready'
+    && document.querySelector('#intro-overlay')?.classList.contains('dismissed'), null, { timeout });
 }
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

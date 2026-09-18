@@ -12,7 +12,8 @@ export function landingShellPlugin() {
         const css = readFileSync(new URL('../src/landing.css', import.meta.url), 'utf8');
         const controller = readFileSync(new URL('../src/landing-bootstrap.js', import.meta.url), 'utf8');
         return html.replace('<!-- LANDING_STYLE -->', () => `<style id="landing-critical">${css}</style>`)
-          .replace('<!-- LANDING_BOOTSTRAP -->', () => `<script>${controller}</script>`);
+          .replace('<!-- LANDING_BOOTSTRAP -->', () => `<script>${controller}</script>`)
+          .replace(/\r\n?/g, '\n');
       },
     },
     generateBundle(_, bundle) {
