@@ -224,6 +224,8 @@ try {
     const context = await browser.newContext({ viewport: { width, height }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
     const page = await context.newPage(); await instrument(page);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+    // Native load and the readable landing must complete independently of entry.
+    await page.waitForLoadState('load', { timeout: 30000 });
     await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_LANDING__));
     const first = await state(page); assertIdle(first);
     await page.screenshot({ path: `${output}/${name}-initial.png`, fullPage: true });

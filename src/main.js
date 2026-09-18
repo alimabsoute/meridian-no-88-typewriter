@@ -26,7 +26,9 @@ const landing = window.__OCTOBERLINE_LANDING__;
 const landingAssembly = startLandingAssembly({ container: document.querySelector('#landing-assembly'), landing });
 landing.assembly = landingAssembly;
 document.querySelector('#replay-assembly').addEventListener('click', () => landingAssembly.replay());
-await landing.entry;
+// Finish evaluating the module while a visitor reads the landing page.
+// Room initialization has its own explicit, gesture-triggered lifecycle.
+void landing.entry.then(async () => {
 // Finish releasing the preview before the live renderer acquires model assets.
 landingAssembly.dispose();
 async function paintLoadingStage(message) {
@@ -2243,3 +2245,8 @@ enterStudio();
 landing.finish();
 lastTime = performance.now();
 requestAnimationFrame(animate);
+}).catch(error => {
+  // Keep specific errors such as the WebGL fallback intact.
+  if (landing.status !== 'error') landing.fail();
+  console.error(error);
+});

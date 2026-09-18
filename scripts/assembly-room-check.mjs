@@ -31,6 +31,7 @@ async function decorState() {
 }
 try {
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('load', { timeout: 30000 });
   await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__?.assembly?.getState().phase === 'assembling', null, { timeout: 60000 });
   const early = await page.evaluate(() => window.__OCTOBERLINE_LANDING__.assembly.getState());
   await page.screenshot({ path: `${output}/desktop-assembling.png` });
@@ -44,8 +45,18 @@ try {
   await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.decor.getState().artLoaded
     && window.__OCTOBERLINE_211__.room.decor.video.currentTime > 0.5, null, { timeout: 60000 });
   await page.keyboard.type('A little Philadelphia.', { delay: 70 });
-  await page.waitForFunction(() => window.__OCTOBERLINE_211__.document.toPlainText().includes('A little Philadelphia.'));
-  report.scenarios.push({ name: 'fresh-room-keyboard-input', text: await page.evaluate(() => window.__OCTOBERLINE_211__.document.toPlainText()) });
+  // Check real keyboard delivery and the mechanical queue independently of a
+  // software GPU's frame cadence. Video advancement below still uses real time.
+  const input = await page.evaluate(() => {
+    const { model, document: sheet } = window.__OCTOBERLINE_211__;
+    for (let step = 0; step < 128; step++) {
+      if (!model.returning && !model.tabMotion && !model.activeStrikes.length && !model.commandQueue.length) return { settled: true, text: sheet.toPlainText() };
+      model.update(0.04);
+    }
+    return { settled: false, text: sheet.toPlainText() };
+  });
+  assert(input.settled); assert(input.text.includes('A little Philadelphia.'));
+  report.scenarios.push({ name: 'fresh-room-keyboard-input', ...input });
   const active = await decorState();
   assert(active.muted && active.looping && active.screenUsesVideo && active.artLoaded);
   await page.waitForFunction(time => window.__OCTOBERLINE_211__.room.decor.video.currentTime > time + 1, active.currentTime);
@@ -71,6 +82,7 @@ try {
   await page.waitForFunction(key => JSON.parse(localStorage.getItem(key) || '{}').tvPlaying === false, BRAND.simulatorStorageKey);
   await page.screenshot({ path: `${output}/room-tv-control.png` });
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('load', { timeout: 30000 });
   const requestCount = requests.filter(url => url.includes('philly-tv.mp4')).length;
   await enterStudio(page);
   const restoredOff = await decorState();
