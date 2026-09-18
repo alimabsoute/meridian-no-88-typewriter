@@ -12,6 +12,9 @@
     "test": "vitest run",
     "test:landing": "node scripts/landing-motion-check.mjs",
     "test:room-decor": "node scripts/assembly-room-check.mjs",
+    "test:updates": "node scripts/updates-signup-check.mjs && node scripts/pulse-signup-adapter-check.mjs",
+    "test:tv-controls": "node scripts/television-controls-check.mjs && node scripts/television-surface-check.mjs && node scripts/television-playback-check.mjs",
+    "test:first-sheet-guide": "node scripts/first-sheet-guide-check.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test:interaction": "node scripts/interaction-check.mjs",
     "test:offline": "node scripts/direct-file-check.mjs",
@@ -24,7 +27,7 @@
     "test:package": "node scripts/release-package-check.mjs",
     "package:release": "node scripts/package-release.mjs",
     "build:release": "npm run build && npm run package:release && npm run test:package",
-    "verify": "npm test && npm run build:release && npm run test:landing && npm run test:room-decor && npm run test:interaction && npm run test:release-ui && npm run test:workbench && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
+    "verify": "npm test && npm run test:updates && npm run test:tv-controls && npm run test:first-sheet-guide && npm run build:release && npm run test:landing && npm run test:room-decor && npm run test:interaction && npm run test:release-ui && npm run test:workbench && npm run test:offline && npm run test:performance && npm run test:visual && npm run test:community-preview && npm run test:writing-board-preview"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.2.6",

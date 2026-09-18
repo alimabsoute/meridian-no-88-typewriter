@@ -12,6 +12,22 @@ const smooth = (value) => {
   return t * t * t * (t * (t * 6 - 15) + 10);
 };
 
+// Three's compileAsync timer can outlive disposed preview materials. Poll
+// immutable native program handles using our cancellable paint boundary
+// instead; KHR's completion query does not stall the browser while linking.
+export async function waitForLandingPrograms(renderer, afterPaint, cancelled) {
+  if (cancelled()) return false;
+  const extension = renderer.extensions.get('KHR_parallel_shader_compile');
+  if (!extension) return Boolean(await afterPaint()) && !cancelled();
+  const context = renderer.getContext();
+  const programs = renderer.info.programs.map((program) => program.program);
+  while (!cancelled()) {
+    if (programs.every((program) => context.getProgramParameter(program, extension.COMPLETION_STATUS_KHR))) return true;
+    if (!await afterPaint()) return false;
+  }
+  return false;
+}
+
 // Presentation tweens depend on visible wall time, not the number of frames a
 // GPU can deliver. A slow frame must not turn this brief entrance into minutes.
 // Restart the time origin after a pause so hidden-tab time never advances it.
@@ -258,6 +274,9 @@ function fitDistance(bounds, target, aspect, fov) {
  * never waits on it. dispose() is synchronous, idempotent, and also settles
  * ready while a driver is still completing asynchronous shader compilation. */
 export function startLandingAssembly({ container, landing }) {
+  const startedAt = performance.now();
+  const startupStages = [];
+  const recordStartup = (name, start) => startupStages.push({ name, start, duration: performance.now() - start });
   let phase = 'preparing';
   let disposed = false;
   let renderer = null;
@@ -323,6 +342,7 @@ export function startLandingAssembly({ container, landing }) {
     ...assemblyState(),
     frameCount,
     firstRenderAt,
+    startup: { startedAt, stages: startupStages.map((stage) => ({ ...stage })) },
     // Bounded measurements of real renderer submissions, not an unrelated RAF
     // probe. Phase codes: 1 assembling, 2 settled, 3 reduced-motion static.
     renderTimeline: renderTimeline.map((sample) => [...sample]),
@@ -341,11 +361,17 @@ export function startLandingAssembly({ container, landing }) {
   const cancelled = () => disposed || landing?.started;
   const afterPaint = () => new Promise((resolve) => {
     if (cancelled()) return resolve(false);
+    const pending = { resolve, timer: 0 };
     const handle = requestAnimationFrame(() => {
-      pendingPaints.delete(handle);
-      resolve(!cancelled());
+      // Promise continuations inside RAF run before that frame paints. A task
+      // after RAF lets the paper overture actually reach the screen before
+      // CPU geometry construction or GPU preparation takes its turn.
+      pending.timer = setTimeout(() => {
+        pendingPaints.delete(handle);
+        resolve(!cancelled());
+      }, 0);
     });
-    pendingPaints.set(handle, resolve);
+    pendingPaints.set(handle, pending);
   });
   const stopFrame = () => {
     if (frame) cancelAnimationFrame(frame);
@@ -447,9 +473,10 @@ export function startLandingAssembly({ container, landing }) {
     if (idle) globalThis.cancelIdleCallback?.(idle);
     if (timer) clearTimeout(timer);
     idle = timer = 0;
-    for (const [handle, resolve] of pendingPaints) {
+    for (const [handle, pending] of pendingPaints) {
       cancelAnimationFrame(handle);
-      resolve(false);
+      clearTimeout(pending.timer);
+      pending.resolve(false);
     }
     pendingPaints.clear();
     resizeObserver?.disconnect();
@@ -515,6 +542,7 @@ export function startLandingAssembly({ container, landing }) {
     try {
       if (!await afterPaint() || !await afterPaint()) return dispose();
       if (cancelled()) return dispose();
+      let stageStart = performance.now();
       canvas = document.createElement('canvas');
       canvas.className = 'landing-assembly-canvas';
       canvas.setAttribute('aria-hidden', 'true');
@@ -533,13 +561,18 @@ export function startLandingAssembly({ container, landing }) {
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(36, 1, 0.1, 70);
       resize();
+      recordStartup('renderer', stageStart);
       if (!await afterPaint()) return dispose();
 
+      stageStart = performance.now();
       paper = makePreviewPaper();
       const documentState = new TypewriterDocument();
       documentState.column = 32;
       documentState.line = 13;
       model = new TypewriterModel({ scene, documentState, paperRenderer: paper, audio: {}, reducedMotion: true });
+      recordStartup('authored-model', stageStart);
+      if (!await afterPaint()) return dispose();
+      stageStart = performance.now();
       // Keep the real walnut desk and leather blotter, but let the light itself
       // remain off-camera. Hidden studio resources are still released below.
       model.root.getObjectByName('DeskLamp').visible = false;
@@ -554,12 +587,17 @@ export function startLandingAssembly({ container, landing }) {
       openBounds = new THREE.Box3().setFromObject(model.machine);
       openBounds.min.y = 0;
       resize();
+      recordStartup('assembly-groups', stageStart);
       if (!await afterPaint()) return dispose();
 
+      stageStart = performance.now();
       const room = new RoomEnvironment();
       const generator = new THREE.PMREMGenerator(renderer);
       try {
-        reflection = generator.fromScene(room, 0.06);
+        // This broad, softly lit room only supplies blurred reflection. Half
+        // resolution retains that lighting while rasterizing a quarter as many
+        // cube-face pixels during the expensive startup environment pass.
+        reflection = generator.fromScene(room, 0.06, 0.1, 100, { size: 128 });
         scene.environment = reflection.texture;
         scene.environmentIntensity = 0.3;
       } finally {
@@ -585,12 +623,14 @@ export function startLandingAssembly({ container, landing }) {
       elapsed = reducedMotion ? ASSEMBLY_SECONDS : 0;
       assembly.setTime(elapsed);
       updateCamera();
+      recordStartup('environment-and-lights', stageStart);
       if (!await afterPaint()) return dispose();
-      // Three's compileAsync owns an uncancellable timeout poll which can read
-      // disposed material properties if entry interrupts shader preparation.
-      // Compile the small preview synchronously, then yield a cancellable paint
-      // before its first render. The already-painted CTA remains independent.
+      stageStart = performance.now();
       renderer.compile(scene, camera);
+      recordStartup('shader-dispatch', stageStart);
+      stageStart = performance.now();
+      if (!await waitForLandingPrograms(renderer, afterPaint, cancelled)) return dispose();
+      recordStartup('shader-ready', stageStart);
       if (!await afterPaint()) return dispose();
       if (cancelled()) return dispose();
       reducedMotion = motionQuery?.matches ?? false;
@@ -598,7 +638,9 @@ export function startLandingAssembly({ container, landing }) {
       animationClock.reset(elapsed);
       assembly.setTime(elapsed);
       setPhase(reducedMotion ? 'static' : 'assembling');
+      stageStart = performance.now();
       render();
+      recordStartup('first-render', stageStart);
       if (reducedMotion) renderer.shadowMap.autoUpdate = false;
       container.classList.add('assembly-visible');
       resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;

@@ -6,7 +6,7 @@ async function openWorkbench(page, name) {
 }
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import {
   DEFAULT_PREVIEW_URL,
   ensurePreviewServer,
@@ -57,8 +57,95 @@ async function prepare(page) {
   await enterSimulator(page);
 }
 
+// Inspect the visible framing contract instead of the old fixed Front position.
+// The camera now backs away and offsets its projection to clear page chrome.
+function frontOverviewState({ waitForFit = false } = {}) {
+  const api = window.__OCTOBERLINE_211__;
+  if (!api?.room.decor.television) return waitForFit ? false : { ready: false };
+  const { camera, controls } = api;
+  const television = api.room.decor.television;
+  const width = window.innerWidth, height = window.innerHeight;
+  const safeArea = {
+    left: 24, right: width - 24,
+    top: document.querySelector('.masthead').getBoundingClientRect().bottom + 12,
+    bottom: document.querySelector('.workbench-toolbar').getBoundingClientRect().top - 12,
+  };
+  television.updateWorldMatrix(true, false);
+  const project = (x, y, z, local = false) => {
+    const point = camera.position.clone().set(x, y, z);
+    if (local) point.applyMatrix4(television.matrixWorld);
+    point.project(camera);
+    return { x: (point.x + 1) * width / 2, y: (1 - point.y) * height / 2, depth: point.z };
+  };
+  const frame = [], machine = [];
+  for (const x of [-2.76, 2.76]) for (const y of [-1.62, 1.62]) frame.push(project(x, y, 0.53, true));
+  for (const x of [-5, 5]) for (const y of [0.2, 5]) for (const z of [-2, 4]) machine.push(project(x, y, z));
+  const bounds = points => ({ left: Math.min(...points.map(point => point.x)), right: Math.max(...points.map(point => point.x)),
+    top: Math.min(...points.map(point => point.y)), bottom: Math.max(...points.map(point => point.y)) });
+  const inside = point => Number.isFinite(point.x) && Number.isFinite(point.y) && point.depth > -1 && point.depth < 1
+    && point.x >= safeArea.left - 0.5 && point.x <= safeArea.right + 0.5
+    && point.y >= safeArea.top - 0.5 && point.y <= safeArea.bottom + 0.5;
+  const portrait = width <= 900 && width / height < 1.25;
+  const expectedTarget = camera.position.clone().set(...(portrait ? [-2.2, 2.6, -2.1] : [1.65, 3.45, -2.1]));
+  const expectedDirection = camera.position.clone().set(1.2 - 1.65, 5.7 - 3.45, 16.8 + 2.1).normalize();
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  const expectedFov = portrait ? 60 : width <= 900 ? 50 : 43;
+  const state = {
+    position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov,
+    viewport: [width, height], safeArea, television: bounds(frame), machine: bounds(machine),
+    offsetY: camera.view?.offsetY ?? 0,
+    fits: frame.every(inside) && machine.every(inside)
+      && controls.target.distanceTo(expectedTarget) < 0.02 && direction.distanceTo(expectedDirection) < 0.001
+      && Math.abs(camera.fov - expectedFov) < 0.02,
+  };
+  return waitForFit && !state.fits ? false : state;
+}
+
+async function readDiagnostic(page, read) {
+  let deadline;
+  return Promise.race([
+    page.evaluate(read).catch(error => ({ unavailable: error.message })),
+    new Promise(resolve => { deadline = setTimeout(() => resolve({ unavailable: 'Browser diagnostic exceeded 2000ms' }), 2_000); }),
+  ]).finally(() => clearTimeout(deadline));
+}
+
+async function waitForFrontOverview(page) {
+  try {
+    const result = await page.waitForFunction(frontOverviewState, { waitForFit: true }, { timeout: 30_000, polling: 100 });
+    try { return await result.jsonValue(); } finally { await result.dispose(); }
+  } catch (error) {
+    const state = await readDiagnostic(page, frontOverviewState);
+    throw new Error(`Responsive Front overview did not fit within 30000ms: ${JSON.stringify(state)}`, { cause: error });
+  }
+}
+
+async function waitForFirstSheetCoach(page) {
+  const startedAt = performance.now();
+  try {
+    // The coach is revealed by a 1500ms timer, not by the animation loop.
+    // RAF-only observation can miss an already-visible coach on a slow GPU.
+    await page.waitForFunction(() => {
+      const coach = document.querySelector('#first-sheet-coach');
+      return Boolean(coach && !coach.hidden);
+    }, null, { timeout: 4_000, polling: 100 });
+    return { elapsedMs: performance.now() - startedAt, timeoutMs: 4_000, pollingMs: 100 };
+  } catch (error) {
+    const state = await readDiagnostic(page, () => ({
+      coachExists: Boolean(document.querySelector('#first-sheet-coach')),
+      coachHidden: document.querySelector('#first-sheet-coach')?.hidden,
+      visibility: document.visibilityState,
+      focused: document.activeElement?.id,
+      landingStatus: window.__OCTOBERLINE_LANDING__?.status,
+      keyboardCaptured: window.__OCTOBERLINE_211__?.keyboardCaptured,
+      insertedSheet: Boolean(window.__OCTOBERLINE_211__?.lifecycle.getOverview().insertedSheet),
+      tutorialState: localStorage.getItem('octoberline211.first-sheet-tutorial.v1'),
+    }));
+    throw new Error(`First-sheet coach did not appear within 4000ms: ${JSON.stringify(state)}`, { cause: error });
+  }
+}
+
 const browser = await launchBrowser();
-const report = {};
+const report = { ok: false };
 
 try {
   const desktop = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
@@ -112,13 +199,11 @@ try {
   const guideReturn = await page.evaluate(() => ({ focused: document.activeElement?.id, open: document.querySelector('#landing-guide').open }));
   invariant(!guideReturn.open && guideReturn.focused === 'intro-guide', `Guide did not restore focus: ${JSON.stringify(guideReturn)}`);
   await enterSimulator(page);
-  await page.waitForFunction(() => {
-    const api = window.__OCTOBERLINE_211__;
-    return Math.abs(api.camera.position.x - 1.2) < 0.02
-      && Math.abs(api.camera.position.y - 5.7) < 0.02
-      && Math.abs(api.camera.position.z - 16.8) < 0.02
-      && Math.abs(api.camera.fov - 43) < 0.02;
-  });
+  // Observe the timer-driven coach immediately after entry, independently of
+  // camera/frame readiness, so the 4s deadline cannot hide behind a camera wait.
+  const [frontOverview, coachArrival] = await Promise.all([
+    waitForFrontOverview(page), waitForFirstSheetCoach(page),
+  ]);
   const entry = await page.evaluate(() => ({
     position: window.__OCTOBERLINE_211__.camera.position.toArray(),
     target: window.__OCTOBERLINE_211__.controls.target.toArray(),
@@ -134,14 +219,7 @@ try {
     roomAudioStarted: Boolean(window.__OCTOBERLINE_211__.atmosphereAudio.context),
   }));
   invariant(
-    Math.abs(entry.position[0] - 1.2) < 0.02
-      && Math.abs(entry.position[1] - 5.7) < 0.02
-      && Math.abs(entry.position[2] - 16.8) < 0.02
-      && Math.abs(entry.target[0] - 1.65) < 0.02
-      && Math.abs(entry.target[1] - 3.45) < 0.02
-      && Math.abs(entry.target[2] + 2.1) < 0.02
-      && Math.abs(entry.fov - 43) < 0.02
-      && entry.activeView === 'front'
+    frontOverview.fits && entry.activeView === 'front'
       && entry.mobileView === 'front'
       && entry.overlayHidden === 'true'
       && entry.overlayInert
@@ -152,8 +230,6 @@ try {
       && entry.roomAudioStarted,
     `Landing entry handoff mismatch: ${JSON.stringify(entry)}`,
   );
-  await page.waitForFunction(() => !document.querySelector('#first-sheet-coach')?.hidden, null, { timeout: 4_000 });
-
   const initial = await page.evaluate(() => ({
     name: document.querySelector('.brand-name span')?.textContent,
     number: document.querySelector('.brand-name i')?.textContent,
@@ -439,6 +515,8 @@ try {
     preEntryGuide,
     guideReturn,
     entry,
+    frontOverview,
+    coachArrival,
     initial,
     coachTrayCollision,
     marginDragFinished,
@@ -479,6 +557,7 @@ try {
   const mobilePage = await mobile.newPage();
   const mobileErrors = collectErrors(mobilePage);
   await prepare(mobilePage);
+  const mobileOverview = await waitForFrontOverview(mobilePage);
   const mobileState = await mobilePage.evaluate(() => {
     const room = window.__OCTOBERLINE_211__.room;
     const before = room.elapsed;
@@ -543,11 +622,17 @@ try {
   invariant(mobileErrors.length === 0, `Mobile browser errors: ${mobileErrors.join(' | ')}`);
   const mobileShot = path.join(root, 'visual-checks', '13-release-ui-mobile.png');
   await mobilePage.screenshot({ path: mobileShot, animations: 'disabled' });
-  report.mobile = { ...mobileState, mobileMechanics, environmentGuard, modalGuard, noPaperGuard, screenshot: mobileShot };
+  report.mobile = { ...mobileState, frontOverview: mobileOverview, mobileMechanics, environmentGuard, modalGuard, noPaperGuard, screenshot: mobileShot };
   await mobile.close();
+  report.ok = true;
+} catch (error) {
+  report.ok = false;
+  report.error = error.stack || error.message;
+  throw error;
 } finally {
   await browser.close();
   await preview.close();
+  await writeFile(path.join(root, 'visual-checks', 'release-ui-results.json'), `${JSON.stringify({ targetUrl, ...report }, null, 2)}\n`);
 }
 
 process.stdout.write(`${JSON.stringify({ targetUrl, ...report }, null, 2)}\n`);

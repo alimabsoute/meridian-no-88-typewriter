@@ -1,4 +1,5 @@
 import { enterStudio } from './browser-test-helpers.mjs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import {
   DEFAULT_PREVIEW_URL,
   ensurePreviewServer,
@@ -9,6 +10,8 @@ import {
 const configuredTargetUrl = process.env.TARGET_URL || withQuality(DEFAULT_PREVIEW_URL, 'default');
 const preview = await ensurePreviewServer({ targetUrl: configuredTargetUrl });
 const defaultUrl = withQuality(preview.targetUrl, 'default');
+const reportDirectory = new URL('../visual-checks/', import.meta.url);
+const report = { ok: false, defaultUrl, timingBasis: 'CDP timeTicks elapsed task durations; not thread CPU time' };
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -34,37 +37,79 @@ async function openSimulator(page, targetUrl) {
 async function sampleRaf(page, label, configure) {
   await page.evaluate(configure);
   await page.waitForTimeout(300);
-  return page.evaluate((sampleLabel) => new Promise((resolve) => {
-    let frames = 0;
-    let first = 0;
-    function frame(now) {
-      if (!first) first = now;
-      frames += 1;
-      if (frames >= 45) {
-        const averageFrameMs = (now - first) / (frames - 1);
-        resolve({ label: sampleLabel, averageFrameMs, fps: Math.round(1000 / averageFrameMs) });
-      } else requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
-  }), label);
+  let deadline;
+  return Promise.race([
+    page.evaluate((sampleLabel) => new Promise((resolve) => {
+      const targetFrames = 45;
+      const budgetMs = 10_000;
+      const startedAt = performance.now();
+      let frames = 0;
+      let first = null;
+      let last = null;
+      let frameId = 0;
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        cancelAnimationFrame(frameId);
+        const averageFrameMs = frames > 1 ? (last - first) / (frames - 1) : null;
+        resolve({
+          label: sampleLabel,
+          sampleCount: frames,
+          targetFrames,
+          completedTarget: frames >= targetFrames,
+          budgetMs,
+          durationMs: performance.now() - startedAt,
+          averageFrameMs,
+          fps: averageFrameMs > 0 ? Math.round(1000 / averageFrameMs) : null,
+        });
+      };
+      const timer = setTimeout(finish, budgetMs);
+      function frame(now) {
+        if (finished) return;
+        first ??= now;
+        last = now;
+        frames += 1;
+        if (frames >= targetFrames || performance.now() - startedAt >= budgetMs) finish();
+        else frameId = requestAnimationFrame(frame);
+      }
+      frameId = requestAnimationFrame(frame);
+    }), label),
+    new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error(`RAF telemetry ${label} did not return within 15000ms`)), 15_000);
+    }),
+  ]).finally(() => clearTimeout(deadline));
 }
 
 async function sampleCpu(page, session, label, configure, durationMs = 1_400) {
   await page.evaluate(configure);
   await page.waitForTimeout(350);
+  const nodeStartedAt = performance.now();
   const before = metricMap(await session.send('Performance.getMetrics'));
-  const wallStart = performance.now();
   await page.waitForTimeout(durationMs);
-  const wallSeconds = (performance.now() - wallStart) / 1_000;
   const after = metricMap(await session.send('Performance.getMetrics'));
-  const deltaMilliseconds = (name) => ((after[name] ?? 0) - (before[name] ?? 0)) * 1_000;
+  const nodeObservedSeconds = (performance.now() - nodeStartedAt) / 1_000;
+  const metricNames = ['Timestamp', 'TaskDuration', 'ScriptDuration', 'LayoutDuration', 'RecalcStyleDuration'];
+  invariant(metricNames.every((name) => Number.isFinite(before[name]) && Number.isFinite(after[name])),
+    `Missing CDP timing endpoints for ${label}: ${JSON.stringify({ before, after })}`);
+  // Numerator and denominator must cover the same browser-side interval.
+  // A Node timer between CDP responses excludes dispatch/transport latency and
+  // can otherwise report more than 1000ms of task time per apparent second.
+  const wallSeconds = after.Timestamp - before.Timestamp;
+  invariant(wallSeconds > 0, `Invalid CDP sample interval for ${label}: ${wallSeconds}`);
+  const deltaMilliseconds = (name) => (after[name] - before[name]) * 1_000;
   const taskMs = deltaMilliseconds('TaskDuration');
   const scriptMs = deltaMilliseconds('ScriptDuration');
   const layoutMs = deltaMilliseconds('LayoutDuration');
   const styleMs = deltaMilliseconds('RecalcStyleDuration');
   return {
     label,
+    requestedDurationMs: durationMs,
     wallSeconds,
+    nodeObservedSeconds,
+    beforeMetrics: Object.fromEntries(metricNames.map((name) => [name, before[name]])),
+    afterMetrics: Object.fromEntries(metricNames.map((name) => [name, after[name]])),
     taskMs,
     scriptMs,
     layoutMs,
@@ -81,7 +126,7 @@ try {
   const page = await context.newPage();
   const errors = collectErrors(page);
   const session = await context.newCDPSession(page);
-  await session.send('Performance.enable');
+  await session.send('Performance.enable', { timeDomain: 'timeTicks' });
 
   try {
     await openSimulator(page, defaultUrl);
@@ -91,6 +136,7 @@ try {
       environmentVisible: window.__OCTOBERLINE_211__.room.environment.visible,
       exteriorVisible: window.__OCTOBERLINE_211__.room.exterior.visible,
     }));
+    report.qualityState = qualityState;
     invariant(
       qualityState.quality === 'medium'
         && qualityState.effectiveQuality === 'medium'
@@ -143,6 +189,7 @@ try {
         resourceEntries: performance.getEntriesByType('resource').length,
       };
     });
+    report.sceneCounts = sceneCounts;
     invariant(
       // The approved scene replaces a six-draw painted backdrop with a bay,
       // instanced living trees and a dimensional city. Keep a finite draw budget.
@@ -160,12 +207,14 @@ try {
       const durationMs = performance.now() - started;
       return { iterations, durationMs, millisecondsPerUpdate: durationMs / iterations };
     });
+    report.updateBenchmark = updateBenchmark;
     invariant(
       updateBenchmark.millisecondsPerUpdate <= 0.75,
       `Room update CPU budget regressed: ${JSON.stringify(updateBenchmark)}`,
     );
 
     const cpuSamples = [];
+    report.cpuSamples = cpuSamples;
     cpuSamples.push(await sampleCpu(page, session, 'machine-only-a', () => {
       window.__OCTOBERLINE_211__.room.setWeatherPreset('quiet', { immediate: true });
       window.__OCTOBERLINE_211__.room.setVisible(false);
@@ -190,20 +239,30 @@ try {
     const environmentScriptOverhead = fullSnowCpu.scriptMsPerSecond - machineScriptBaseline;
     const taskOverheadLimit = Math.max(25, machineTaskBaseline * 0.35);
     const scriptOverheadLimit = Math.max(16, machineScriptBaseline * 0.4);
+    Object.assign(report, {
+      machineTaskBaseline,
+      machineScriptBaseline,
+      environmentTaskOverhead,
+      environmentScriptOverhead,
+      taskOverheadLimit,
+      scriptOverheadLimit,
+    });
     invariant(
       environmentTaskOverhead <= taskOverheadLimit
         && environmentScriptOverhead <= scriptOverheadLimit,
-      `Philadelphia room CPU overhead regressed: ${JSON.stringify({
+      `Philadelphia room elapsed-task overhead regressed: ${JSON.stringify({
         machineTaskBaseline,
         machineScriptBaseline,
         environmentTaskOverhead,
         environmentScriptOverhead,
         taskOverheadLimit,
         scriptOverheadLimit,
+        cpuSamples,
       })}`,
     );
 
     const rafSamples = [];
+    report.rafSamples = rafSamples;
     rafSamples.push(await sampleRaf(page, 'full-snow', () => {
       window.__OCTOBERLINE_211__.room.setVisible(true);
       window.__OCTOBERLINE_211__.room.setWeatherPreset('snow', { immediate: true });
@@ -211,8 +270,9 @@ try {
     rafSamples.push(await sampleRaf(page, 'machine-only', () => {
       window.__OCTOBERLINE_211__.room.setVisible(false);
     }));
-    const rafCapDetected = rafSamples.every(({ fps }) => fps === rafSamples[0].fps)
+    const rafCapDetected = rafSamples.every(({ fps, completedTarget }) => completedTarget && fps === rafSamples[0].fps)
       && [30, 60].includes(rafSamples[0].fps);
+    report.rafCapDetected = rafCapDetected;
 
     const lowContext = await browser.newContext({ viewport: { width: 960, height: 640 } });
     const lowPage = await lowContext.newPage();
@@ -226,6 +286,7 @@ try {
         environmentVisible: window.__OCTOBERLINE_211__.room.environment.visible,
         exteriorVisible: window.__OCTOBERLINE_211__.room.exterior.visible,
       }));
+      report.lowQualityState = lowQualityState;
       invariant(
         lowQualityState.quality === 'low'
           && lowQualityState.effectiveQuality === 'low'
@@ -240,28 +301,19 @@ try {
     }
 
     invariant(!errors.length, `Performance browser errors: ${errors.join(' | ')}`);
-    process.stdout.write(`${JSON.stringify({
-      ok: true,
-      defaultUrl,
-      qualityState,
-      lowQualityState,
-      sceneCounts,
-      updateBenchmark,
-      cpuSamples,
-      machineTaskBaseline,
-      machineScriptBaseline,
-      environmentTaskOverhead,
-      environmentScriptOverhead,
-      taskOverheadLimit,
-      scriptOverheadLimit,
-      rafSamples,
-      rafCapDetected,
-    }, null, 2)}\n`);
+    report.ok = true;
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } finally {
     await session.detach().catch(() => {});
     await context.close();
   }
+} catch (error) {
+  report.ok = false;
+  report.error = error.stack || error.message;
+  throw error;
 } finally {
   await browser?.close().catch(() => {});
   await preview.close();
+  await mkdir(reportDirectory, { recursive: true });
+  await writeFile(new URL('performance-results.json', reportDirectory), `${JSON.stringify(report, null, 2)}\n`);
 }

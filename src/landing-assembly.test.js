@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TypewriterDocument } from './typewriter-document.js';
 import { TypewriterModel } from './typewriter-model.js';
-import { createLandingAnimationClock, createLandingAssemblyParts, disposeLandingScene, startLandingAssembly } from './landing-assembly.js';
+import { createLandingAnimationClock, createLandingAssemblyParts, disposeLandingScene, startLandingAssembly, waitForLandingPrograms } from './landing-assembly.js';
 
 function canvasDocument() {
   const gradient = { addColorStop() {} };
@@ -145,6 +145,42 @@ describe('real model landing assembly', () => {
 });
 
 describe('landing assembly cancellation', () => {
+  it('waits for parallel shader completion without querying disposed program handles after entry', async () => {
+    let cancelled = false;
+    const getProgramParameter = vi.fn(() => false);
+    const renderer = {
+      extensions: { get: () => ({ COMPLETION_STATUS_KHR: 0x91b1 }) },
+      info: { programs: [{ program: 'native-handle' }] },
+      getContext: () => ({ getProgramParameter }),
+    };
+    const afterPaint = vi.fn(async () => { cancelled = true; return false; });
+    expect(await waitForLandingPrograms(renderer, afterPaint, () => cancelled)).toBe(false);
+    expect(getProgramParameter).toHaveBeenCalledExactlyOnceWith('native-handle', 0x91b1);
+    expect(afterPaint).toHaveBeenCalledOnce();
+  });
+
+  it('lets the shell paint while parallel shaders link, then proceeds only when all are ready', async () => {
+    let ready = false;
+    const renderer = {
+      extensions: { get: () => ({ COMPLETION_STATUS_KHR: 0x91b1 }) },
+      info: { programs: [{ program: 'a' }, { program: 'b' }] },
+      getContext: () => ({ getProgramParameter: () => ready }),
+    };
+    const afterPaint = vi.fn(async () => { ready = true; return true; });
+    expect(await waitForLandingPrograms(renderer, afterPaint, () => false)).toBe(true);
+    expect(afterPaint).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a cancellable paint boundary on devices without parallel shader support', async () => {
+    const renderer = { extensions: { get: () => null }, getContext: vi.fn() };
+    const afterPaint = vi.fn(async () => true);
+    expect(await waitForLandingPrograms(renderer, afterPaint, () => false)).toBe(true);
+    expect(afterPaint).toHaveBeenCalledOnce();
+    expect(renderer.getContext).not.toHaveBeenCalled();
+    expect(await waitForLandingPrograms(renderer, afterPaint, () => true)).toBe(false);
+    expect(afterPaint).toHaveBeenCalledOnce();
+  });
+
   it('settles without creating a renderer when entry has already begun', async () => {
     const preview = startLandingAssembly({ container: null, landing: { started: true } });
     expect(await preview.ready).toMatchObject({ disposed: true, phase: 'disposed', frameCount: 0, renderer: null });

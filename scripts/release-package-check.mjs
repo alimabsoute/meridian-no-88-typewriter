@@ -18,7 +18,7 @@ const expectedPreviewRuntime = [
   'coming-soon/writing-board/board.js',
   'coming-soon/release-manifest.json',
 ];
-const expectedRoomMedia = ['media/philly-tv.mp4', 'media/philly-tv-poster.jpg', 'media/philly-wall-art.png'];
+const expectedRoomMedia = ['media/philly-tv.mp4', 'media/philly-tv-standby.svg', 'media/philly-wall-art.png'];
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);

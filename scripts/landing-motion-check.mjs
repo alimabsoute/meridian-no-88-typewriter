@@ -37,6 +37,8 @@ async function state(page, { replay = false } = {}) {
     const replayed = replay ? window.__OCTOBERLINE_LANDING__.assembly.replay() : undefined;
     const intro = document.querySelector('#intro-overlay'), title = document.querySelector('#intro-title');
     const css = getComputedStyle(title);
+    const prelude = document.querySelector('.landing-prelude');
+    const paper = document.querySelector('.prelude-paper');
     return {
       title: title.textContent.trim(), titleVisible: css.visibility !== 'hidden' && Number(css.opacity) > 0 && title.getBoundingClientRect().height > 0,
       status: window.__OCTOBERLINE_LANDING__?.status, started: window.__OCTOBERLINE_LANDING__?.started,
@@ -44,6 +46,14 @@ async function state(page, { replay = false } = {}) {
       preview: window.__OCTOBERLINE_LANDING__?.assembly?.getState() ?? null,
       replayed,
       previewCanvases: document.querySelectorAll('#landing-assembly canvas').length,
+      prelude: prelude ? {
+        visible: getComputedStyle(prelude).visibility !== 'hidden' && Number(getComputedStyle(prelude).opacity) > 0,
+        paperVisible: paper.getBoundingClientRect().width > 0 && getComputedStyle(paper).visibility !== 'hidden',
+        noMedia: prelude.querySelectorAll('img, canvas, video').length === 0,
+        ink: prelude.querySelector('.prelude-ink').textContent,
+        transform: getComputedStyle(paper).transform,
+        animations: prelude.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length,
+      } : null,
       contexts: window.__landingContextRecords?.map(({ canvas, context }) => ({ connected: canvas.isConnected, lost: context.isContextLost() })) ?? [],
       width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth,
       buttons: ['enter-studio','intro-guide'].map(id => {
@@ -62,6 +72,11 @@ function assertIdle(s, { beforeBundle = false } = {}) {
   if (beforeBundle) {
     assert.equal(s.constructors.webgl, 0, 'The streamed shell must not initialize the preview before its bundle arrives');
     assert.equal(s.preview, null);
+    assert(s.prelude?.visible && s.prelude.paperVisible && s.prelude.noMedia, 'Paper overture must already be visible without a runtime or media request');
+    assert.match(s.prelude.ink, /Welcome, writer\./);
+    assert.match(s.prelude.ink, /Words cross distance\./);
+    assert.match(s.prelude.ink, /No permission needed\./);
+    assert(s.prelude.animations > 0, 'The immediate composition must animate before the runtime arrives');
   }
   assert(s.scrollWidth <= s.width + 1, 'No horizontal scrolling');
   for (const b of s.buttons) {
@@ -157,6 +172,8 @@ try {
   // Serve actual production HTML as two chunks. The simulator tail is withheld,
   // so a painted, working guide and queued entry cannot depend on that bundle.
   const html = await readFile('dist/index.html');
+  const runtimeOffset = html.indexOf('<script type="module"');
+  assert(runtimeOffset > 0, 'Built page must retain its deferred simulator boundary');
   const media = new Map(await Promise.all([
     ['/media/philly-tv.mp4', 'video/mp4', 'dist/media/philly-tv.mp4'],
     ['/media/philly-tv-poster.jpg', 'image/jpeg', 'dist/media/philly-tv-poster.jpg'],
@@ -186,9 +203,9 @@ try {
     if (pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
     if (pathname !== '/' && pathname !== '/index.html') { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.write(html.subarray(0, 30000));
+    res.write(html.subarray(0, runtimeOffset));
     await tail;
-    res.end(html.subarray(30000));
+    res.end(html.subarray(runtimeOffset));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
@@ -197,7 +214,11 @@ try {
     await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: 'commit' });
     await page.locator('#intro-title').waitFor({ state: 'visible' });
     await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_LANDING__));
+    await page.locator('.prelude-paper').waitFor({ state: 'visible' });
     const partial = await state(page); assertIdle(partial, { beforeBundle: true }); await guide(page);
+    await page.waitForTimeout(180);
+    const movingPrelude = await state(page);
+    assert.notEqual(movingPrelude.prelude.transform, partial.prelude.transform, 'The paper must visibly move while the runtime is withheld');
     // Playwright waits for document.fonts.ready, which cannot settle while this
     // HTML response is intentionally open. Capture the actual partial paint.
     const capture = await context.newCDPSession(page);
@@ -214,7 +235,7 @@ try {
     await page.waitForFunction(() => Boolean(window.__OCTOBERLINE_211__?.keyboardCaptured), null, { timeout: 60000 });
     const entered = await typeAfterEntry(page, 'Stream proof.');
     assertDisposedPreview(entered, { constructed: false });
-    report.scenarios.push({ name: 'first-30000-bytes-streamed', partial, queued, entered });
+    report.scenarios.push({ name: 'immediate-paper-overture-before-withheld-runtime', shellBytes: runtimeOffset, partial, movingPrelude, queued, entered });
   } finally { releaseTail(); await context.close(); await new Promise(resolve => server.close(resolve)); }
 
   for (const [name, width, height, reduced] of [

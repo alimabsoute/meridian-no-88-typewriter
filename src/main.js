@@ -2,6 +2,9 @@ import '@fontsource/bebas-neue/400.css';
 import '@fontsource/special-elite/400.css';
 import './styles.css';
 import * as THREE from 'three';
+import { fitRoomOverview } from './room-overview.js';
+import { createTelevisionSurface } from './television-surface.js';
+import { createTelevisionControls } from './television-controls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { initWorkbench } from './workbench-ui.js';
@@ -229,7 +232,10 @@ const room = new PhiladelphiaWritingRoom({
   eveningProgress: 0.24,
   brightness: 1.22,
   reducedMotion: reducedMotionQuery.matches,
-  tvPlaying: stored?.tvPlaying !== false,
+  tvPlaying: true,
+  nativeVideo: true,
+  deferTVPlayback: true,
+  tvVolume: Number.isFinite(stored?.tvVolume) ? stored.tvVolume : 0.28,
   paused: stored?.atmospherePaused === true,
   seed: 88,
 });
@@ -287,7 +293,8 @@ let inspectionEnabled = false;
 let paperActionBusy = false;
 let quietModeEnabled = stored?.quietModeEnabled === true;
 let atmospherePaused = stored?.atmospherePaused === true;
-let tvPlaying = stored?.tvPlaying !== false;
+// A new visit always tunes in at the start of the first segment, silently.
+let tvPlaying = true;
 let quietIdleTimer = 0;
 let selectedPaperId = null;
 const paperThumbnailCache = new Map();
@@ -401,7 +408,7 @@ function syncFirstSheetCoach() {
     else step.removeAttribute('aria-current');
   });
   refs['coach-progress'].textContent = `${String(Math.min(firstSheetStep + 1, steps.length)).padStart(2, '0')} / ${String(steps.length).padStart(2, '0')}`;
-  refs['coach-next'].textContent = firstSheetStep === steps.length - 1 ? 'FINISH' : firstSheetStep === 3 ? 'I HEAR IT' : 'NEXT';
+  refs['coach-next'].textContent = firstSheetStep === steps.length - 1 ? 'READY TO WRITE' : 'NEXT TIP →';
 }
 
 function showFirstSheetCoach({ reset = false } = {}) {
@@ -413,7 +420,7 @@ function showFirstSheetCoach({ reset = false } = {}) {
   }
   refs['first-sheet-coach'].hidden = false;
   syncFirstSheetCoach();
-  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] span')?.textContent;
+  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] .coach-instruction')?.textContent;
   announce(`First-sheet guide available. ${activeStep || 'Use Next or Skip Guide to continue.'}`);
   return true;
 }
@@ -434,7 +441,7 @@ function advanceFirstSheetCoach(action, { force = false } = {}) {
   }
   firstSheetStep += 1;
   syncFirstSheetCoach();
-  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] span')?.textContent;
+  const activeStep = refs['first-sheet-coach'].querySelector('[aria-current="step"] .coach-instruction')?.textContent;
   if (activeStep) announce(`First-sheet guide step ${firstSheetStep + 1}. ${activeStep}`);
   return true;
 }
@@ -541,6 +548,7 @@ function persist() {
         quietModeEnabled,
         atmospherePaused,
         tvPlaying,
+        tvVolume: room.decor.volume,
         touchPreset: model.getTouchCalibration().preset,
       }));
     } catch {
@@ -1083,14 +1091,27 @@ function setCameraView(name, duration = 0.9) {
   currentCameraView = name;
   const compact = window.innerWidth <= 900;
   const compactTarget = compact && name === 'writer' ? new THREE.Vector3(2.8, 2.8, -1.5) : null;
+  const topInset = document.querySelector?.('.masthead')?.getBoundingClientRect().bottom ?? 0;
+  const bottomInset = window.innerHeight - (document.querySelector?.('.workbench-toolbar')?.getBoundingClientRect().top ?? window.innerHeight);
+  const overview = name === 'front' ? fitRoomOverview(preset, room.decor?.television, window.innerWidth, window.innerHeight, { topInset: topInset + 12, bottomInset: bottomInset + 12 }) : null;
+  const toPosition = overview?.position ?? preset.position.clone();
+  const toTarget = overview?.target ?? compactTarget ?? preset.target.clone();
+  const maxDistance = Math.max(22, toPosition.distanceTo(toTarget) + 0.01);
+  // OrbitControls also runs during preset easing. Keep both ends reachable,
+  // then restore the destination limit when the move finishes.
+  controls.maxDistance = Math.max(maxDistance, camera.position.distanceTo(controls.target) + 0.01);
+  camera.far = Math.max(camera.far, maxDistance + 70);
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   cameraMotion = {
     fromPosition: camera.position.clone(),
     fromTarget: controls.target.clone(),
     fromFov: camera.fov,
-    toPosition: preset.position.clone(),
-    toTarget: compactTarget ?? preset.target.clone(),
-    toFov: compact && ['writer', 'front'].includes(name) ? 50 : preset.fov ?? 37,
+    fromOffsetY: camera.view?.enabled ? camera.view.offsetY : 0,
+    toOffsetY: overview?.offsetY ?? 0,
+    toPosition,
+    toTarget,
+    maxDistance,
+    toFov: overview?.fov ?? (compact && name === 'writer' ? 50 : preset.fov ?? 37),
     elapsed: 0,
     duration: reduced ? 0.01 : Math.max(0.001, duration),
   };
@@ -1110,8 +1131,8 @@ function updateCameraMotion(delta) {
   camera.position.lerpVectors(cameraMotion.fromPosition, cameraMotion.toPosition, eased);
   controls.target.lerpVectors(cameraMotion.fromTarget, cameraMotion.toTarget, eased);
   camera.fov = THREE.MathUtils.lerp(cameraMotion.fromFov, cameraMotion.toFov, eased);
-  camera.updateProjectionMatrix();
-  if (raw >= 1) cameraMotion = null;
+  camera.setViewOffset(window.innerWidth, window.innerHeight, 0, THREE.MathUtils.lerp(cameraMotion.fromOffsetY, cameraMotion.toOffsetY, eased), window.innerWidth, window.innerHeight);
+  if (raw >= 1) { controls.maxDistance = cameraMotion.maxDistance; cameraMotion = null; }
 }
 
 function setDocumentTrayOpen(open, { refocus = false } = {}) {
@@ -1216,14 +1237,35 @@ function selectInk(mode) {
 syncInkUi();
 refs['sound-toggle'].setAttribute('aria-pressed', String(audio.enabled));
 
-function syncAtmosphereUi() {
-  room.decor.setTVPlaying(tvPlaying);
-  room.decor.setPaused(atmospherePaused);
+let televisionControls = null;
+const televisionSurface = room.decor.video ? createTelevisionSurface({ parent: app, decor: room.decor, camera }) : null;
+function syncTelevisionUi() {
   const tvToggle = document.getElementById('tv-toggle');
+  tvToggle.dataset.mediaFailures = JSON.stringify(room.decor.mediaFailures);
   tvToggle.setAttribute('aria-pressed', String(tvPlaying));
   tvToggle.querySelector('b').textContent = !tvPlaying ? 'OFF'
     : room.decor.localFileMode ? 'LOCAL SERVER REQUIRED'
-      : atmospherePaused || reducedMotionQuery.matches ? 'PAUSED' : 'ON · SILENT';
+      : atmospherePaused || reducedMotionQuery.matches ? 'PAUSED'
+        : room.decor.mediaStatus === 'unavailable' ? 'ARCHIVE UNAVAILABLE'
+          : room.decor.mediaStatus === 'blocked' ? 'PRESS SOUND TO PLAY'
+            : room.decor.mediaStatus === 'loading' ? 'TUNING IN…' : 'ON';
+  const tvMute = document.getElementById('tv-mute');
+  tvMute.setAttribute('aria-pressed', String(room.decor.muted));
+  tvMute.textContent = room.decor.muted ? 'Sound off' : 'Sound on';
+  document.getElementById('tv-volume').value = String(room.decor.volume);
+  const clip = room.decor.playlist[room.decor.clipIndex];
+  const source = document.getElementById('tv-source');
+  source.href = clip.source;
+  source.textContent = clip.title;
+  document.getElementById('tv-next').textContent = room.decor.mediaStatus === 'unavailable' ? 'Retry clips ↻' : 'Next clip →';
+  televisionControls?.sync();
+}
+room.decor.onChange = syncTelevisionUi;
+
+function syncAtmosphereUi() {
+  room.decor.setTVPlaying(tvPlaying);
+  room.decor.setPaused(atmospherePaused);
+  syncTelevisionUi();
   refs['weather-select'].value = room.weatherPreset === 'automatic' ? 'quiet' : room.weatherPreset;
   refs['unease-select'].value = room.uneaseLevel;
   refs['machine-volume'].value = String(audio.volume);
@@ -1251,7 +1293,25 @@ document.getElementById('tv-toggle').addEventListener('click', () => {
   tvPlaying = !tvPlaying;
   syncAtmosphereUi();
   persist();
-  showToast(tvPlaying ? 'PHILADELPHIA ARCHIVE · SILENT FILMS' : 'TELEVISION OFF', 1000);
+  showToast(tvPlaying ? 'PHILADELPHIA TELEVISION ON' : 'TELEVISION OFF', 1000);
+});
+document.getElementById('tv-mute').addEventListener('click', () => {
+  room.decor.setMuted(!room.decor.muted);
+  syncAtmosphereUi();
+});
+document.getElementById('tv-volume').addEventListener('input', (event) => {
+  room.decor.setVolume(Number(event.target.value));
+  persist();
+});
+document.getElementById('tv-next').addEventListener('click', () => {
+  room.decor.nextClip({ retry: true });
+});
+televisionControls = createTelevisionControls({
+  parent: app, decor: room.decor, camera,
+  onPower: () => document.getElementById('tv-toggle').click(),
+  onMute: () => document.getElementById('tv-mute').click(),
+  onVolume: (value) => { room.decor.setVolume(value); syncTelevisionUi(); persist(); },
+  onFocus: () => { setKeyboardCaptured(false); model.setShiftHeld(false); },
 });
 setQuietMode(quietModeEnabled, { persistState: false });
 syncInputStatus();
@@ -1325,6 +1385,7 @@ function enterStudio() {
   refs['intro-overlay'].setAttribute('aria-hidden', 'true');
   refs['intro-overlay'].inert = true;
   app.classList.remove('landing-active');
+  room.decor.beginPlayback();
   for (const layer of backgroundLayers) layer.inert = false;
   focusMachine();
   audio.start().catch(() => {});
@@ -2161,8 +2222,8 @@ function animate(now) {
   controls.update();
   updateLiveUi(delta);
   renderer.render(scene, camera);
-
-
+  televisionControls?.update();
+  televisionSurface?.update();
   frameAccumulator += delta;
   frameCount += 1;
   if (frameCount >= 180) {

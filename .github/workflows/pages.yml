@@ -2,7 +2,7 @@ name: Test and deploy GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -28,6 +28,12 @@ jobs:
         include:
           - name: units
             script: test
+          - name: updates-signup
+            script: test:updates
+          - name: tv-controls
+            script: test:tv-controls
+          - name: first-sheet-guide
+            script: test:first-sheet-guide
           - name: interaction
             script: test:interaction
           - name: visual
@@ -77,6 +83,7 @@ jobs:
           retention-days: 14
 
   build:
+    if: github.ref == 'refs/heads/main'
     needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 30

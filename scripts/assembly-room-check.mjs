@@ -11,24 +11,65 @@ const browser = await launchBrowser();
 const report = { targetUrl, checkedAt: new Date().toISOString(), scenarios: [], errors: [] };
 const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
 const page = await context.newPage();
+// Keep lifecycle regression tests deterministic even if an external archive is
+// slow or removes a recording. LIVE_ARCHIVE_MEDIA=1 explicitly opts into source
+// availability/CORS testing; fixture results are never labeled real news proof.
+const liveArchive = process.env.LIVE_ARCHIVE_MEDIA === '1';
+report.mediaMode = liveArchive ? 'live-archive' : 'local-video-fixture';
+if (!liveArchive) await page.route('https://archive.org/download/**', route => route.fulfill({
+  path: 'public/media/philly-tv.mp4', contentType: 'video/mp4',
+  headers: { 'access-control-allow-origin': '*' },
+}));
 page.on('pageerror', error => report.errors.push(error.message));
 page.on('console', message => { if (message.type() === 'error') report.errors.push(message.text()); });
 const requests = [];
-page.on('request', request => { if (request.url().includes('/media/')) requests.push(request.url()); });
+page.on('request', request => { if (request.url().includes('/media/') || request.url().includes('archive.org/download/')) requests.push(request.url()); });
 async function decorState() {
   return page.evaluate(() => {
     const decor = window.__OCTOBERLINE_211__.room.decor;
     const video = decor.video;
     let frameHash = null;
-    if (video?.readyState >= 2) {
+    if (!decor.nativeVideo && video?.readyState >= 2) {
       const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 36;
       const ctx = canvas.getContext('2d'); ctx.drawImage(video, 0, 0, 64, 36);
       frameHash = ctx.getImageData(0, 0, 64, 36).data.reduce((hash, value) => ((hash * 31) + value) >>> 0, 0);
     }
-    return { ...decor.getState(), frameHash, screenUsesVideo: decor.screenMaterial.map === decor.videoTexture,
+    return { ...decor.getState(), firstClipSource: decor.playlist[0].src, frameHash, decodedFrames: video?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
+      screenUsesVideo: decor.nativeVideo ? video?.classList.contains('television-video-surface') && getComputedStyle(video).visibility === 'visible' : decor.screenMaterial.map === decor.videoTexture,
       screenColor: decor.screenMaterial.color.getHexString(), videoPaused: video?.paused,
       videoSeeking: video?.seeking, videoReadyState: video?.readyState, videoEnded: video?.ended };
   });
+}
+function playbackProgress({ sample, seconds, expectedClipIndex }) {
+  const decor = window.__OCTOBERLINE_211__.room.decor;
+  const video = decor.video;
+  if (expectedClipIndex !== undefined && decor.clipIndex !== expectedClipIndex) return false;
+  if (!video || video.paused || video.seeking || video.ended || video.readyState < 2) return false;
+  const decodedFrames = video.getVideoPlaybackQuality?.().totalVideoFrames;
+  if (!Number.isFinite(decodedFrames)) return false;
+  if (decor.nativeVideo && (!video.classList.contains('television-video-surface') || getComputedStyle(video).visibility !== 'visible')) return false;
+  // Loading the 38s excerpt is a seek, not 38s of playback. Source changes also
+  // reset the decoder counter. Begin a new measured interval after either one.
+  if (sample.videoReadyState < 2 || sample.videoSeeking || sample.videoEnded
+    || decor.clipIndex !== sample.clipIndex || video.currentTime < sample.currentTime || decodedFrames < sample.decodedFrames) {
+    Object.assign(sample, { clipIndex: decor.clipIndex, currentTime: video.currentTime, decodedFrames,
+      videoReadyState: video.readyState, videoSeeking: false, videoEnded: false });
+    return false;
+  }
+  const mediaSeconds = video.currentTime - sample.currentTime;
+  const newFrames = decodedFrames - sample.decodedFrames;
+  if (mediaSeconds <= seconds || newFrames <= 0) return false;
+  return { clipIndex: decor.clipIndex, fromTime: sample.currentTime, toTime: video.currentTime,
+    fromFrames: sample.decodedFrames, toFrames: decodedFrames, mediaSeconds, newFrames };
+}
+async function waitForPlayback(baseline, seconds = 0.25, expectedClipIndex) {
+  try {
+    const result = await page.waitForFunction(playbackProgress, { sample: baseline, seconds, expectedClipIndex }, { timeout: 15000, polling: 100 });
+    try { return await result.jsonValue(); } finally { await result.dispose(); }
+  } catch (error) {
+    report.mediaFailure = { baseline, seconds, expectedClipIndex, current: await decorState() };
+    throw error;
+  }
 }
 try {
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
@@ -47,8 +88,11 @@ try {
   await page.screenshot({ path: `${output}/desktop-complete.png` });
   report.scenarios.push({ name: 'authored-model-assembly', early, complete });
   await enterStudio(page);
-  await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.decor.getState().artLoaded
-    && window.__OCTOBERLINE_211__.room.decor.video.currentTime > 0.5, null, { timeout: 60000 });
+  await page.waitForFunction(() => {
+    const decor = window.__OCTOBERLINE_211__.room.decor;
+    const video = decor.video;
+    return decor.getState().artLoaded && video.readyState >= 2 && !video.seeking && !video.paused && !video.ended;
+  }, null, { timeout: 60000, polling: 100 });
   await page.keyboard.type('A little Philadelphia.', { delay: 70 });
   // Check real keyboard delivery and the mechanical queue independently of a
   // software GPU's frame cadence. Video advancement below still uses real time.
@@ -63,23 +107,30 @@ try {
   assert(input.settled); assert(input.text.includes('A little Philadelphia.'));
   report.scenarios.push({ name: 'fresh-room-keyboard-input', ...input });
   const active = await decorState();
-  assert(active.muted && active.looping && active.screenUsesVideo && active.artLoaded);
-  await page.waitForFunction(time => window.__OCTOBERLINE_211__.room.decor.video.currentTime > time + 1, active.currentTime);
+  const initialPlayback = await waitForPlayback(active, 1);
   const advanced = await decorState();
-  assert.notEqual(active.frameHash, advanced.frameHash, 'Decoded film imagery must change');
+  assert(advanced.muted && advanced.looping && advanced.screenUsesVideo && advanced.artLoaded);
+  if (!active.nativeVideo) assert.notEqual(active.frameHash, advanced.frameHash, 'Decoded film imagery must change');
   await page.screenshot({ path: `${output}/room-front.png` });
   await page.evaluate(() => window.__OCTOBERLINE_211__.setAtmospherePaused(true));
   const paused = await decorState(); await page.waitForTimeout(350);
   const still = await decorState();
   assert(still.videoPaused); assert(Math.abs(still.currentTime - paused.currentTime) < 0.08);
   await page.evaluate(() => window.__OCTOBERLINE_211__.setAtmospherePaused(false));
-  await page.waitForFunction(time => window.__OCTOBERLINE_211__.room.decor.video.currentTime > time + 0.25, still.currentTime);
-  report.scenarios.push({ name: 'room-media-play-pause-resume', active, advanced, paused, still, mediaRequests: requests });
+  const resumedPlayback = await waitForPlayback(still);
+  report.scenarios.push({ name: 'room-media-play-pause-resume', active, advanced, initialPlayback, paused, still, resumedPlayback, mediaRequests: requests });
   const disposed = await page.evaluate(() => ({ state: window.__OCTOBERLINE_LANDING__.assembly.getState(), canvases: document.querySelectorAll('#landing-assembly canvas').length }));
   assert(disposed.state.disposed && !disposed.state.activeFrame && disposed.canvases === 0);
   report.scenarios.push({ name: 'preview-released-before-room', ...disposed });
   if (await page.locator('#coach-skip').isVisible()) await page.click('#coach-skip');
   await page.click('[data-workbench="room"]');
+  await page.click('#tv-mute');
+  assert.equal((await decorState()).muted, false);
+  await page.locator('#tv-volume').press('Home');
+  for (let step = 0; step < 43; step++) await page.locator('#tv-volume').press('ArrowRight');
+  assert.equal((await decorState()).volume, 0.43);
+  await page.click('#tv-mute');
+  assert.equal((await decorState()).muted, true);
   await page.click('#tv-toggle');
   const poweredOff = await decorState();
   assert.equal(poweredOff.tvEnabled, false); assert.equal(poweredOff.screenColor, '080d10');
@@ -88,37 +139,39 @@ try {
   await page.screenshot({ path: `${output}/room-tv-control.png` });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('load', { timeout: 30000 });
-  const requestCount = requests.filter(url => url.includes('philly-tv.mp4')).length;
+  const requestCount = requests.filter(url => url.includes('archive.org/download/')).length;
   await enterStudio(page);
-  const restoredOff = await decorState();
-  assert.equal(restoredOff.tvEnabled, false); assert(restoredOff.videoPaused);
-  assert.equal(requests.filter(url => url.includes('philly-tv.mp4')).length, requestCount, 'Saved OFF does not request the film');
-  await page.click('[data-workbench="room"]');
-  await page.click('#tv-toggle');
-  await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.decor.video.currentTime > 0.4);
+  const freshVisit = await decorState();
+  assert.equal(freshVisit.tvEnabled, true, 'A fresh visit starts the television as requested');
+  assert.equal(freshVisit.volume, 0.43, 'Television volume survives reload');
+  assert.equal(freshVisit.muted, true, 'A fresh visit remains muted');
+  const freshPlayback = await waitForPlayback(freshVisit, 0.4);
+  const freshRequests = requests.filter(url => url.includes('archive.org/download/')).slice(requestCount);
+  assert.equal(freshRequests[0], freshVisit.firstClipSource, 'A fresh visit must request the first recording before any playlist rollover');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForFunction(() => window.__OCTOBERLINE_211__.room.decor.getState().paused);
   const reducedRoom = await decorState(); assert(reducedRoom.videoPaused);
   assert.equal(await page.locator('#tv-toggle b').textContent(), 'PAUSED');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.waitForFunction(time => window.__OCTOBERLINE_211__.room.decor.video.currentTime > time + 0.25, reducedRoom.currentTime);
+  const reducedResume = await waitForPlayback(reducedRoom);
   const loopBoundary = await page.evaluate(() => {
-    const video = window.__OCTOBERLINE_211__.room.decor.video;
-    video.currentTime = video.duration - 0.3;
-    return video.currentTime;
+    const decor = window.__OCTOBERLINE_211__.room.decor;
+    const video = decor.video;
+    video.currentTime = Math.min(video.duration, decor.playlist[decor.clipIndex].end) - 0.3;
+    return { currentTime: video.currentTime, clipIndex: decor.clipIndex, clipCount: decor.playlist.length };
   });
-  // Prove time wrapped behind the seek point. A slow renderer can miss the
-  // first two seconds of the new loop even while the video plays correctly.
+  // Loading the next clip and proving decoded movement share the existing 15s
+  // deadline; merely seeking to its nonzero start is not a playback success.
+  let loopPlayback;
   try {
-    await page.waitForFunction(boundary => {
-      const v = window.__OCTOBERLINE_211__.room.decor.video;
-      return !v.seeking && v.currentTime < boundary - 1 && !v.paused;
-    }, loopBoundary, { timeout: 15000, polling: 100 });
+    loopPlayback = await waitForPlayback(loopBoundary, 0.25, (loopBoundary.clipIndex + 1) % loopBoundary.clipCount);
   } catch (error) {
-    report.loopFailure = { loopBoundary, state: await decorState() };
+    report.loopFailure = report.mediaFailure;
     throw error;
   }
-  report.scenarios.push({ name: 'tv-off-restored-reduced-motion-and-loop', poweredOff, restoredOff, reducedRoom, loopBoundary, looped: await decorState() });
+  const looped = await decorState();
+  report.scenarios.push({ name: 'tv-power-fresh-visit-reduced-motion-and-loop', poweredOff, freshVisit, freshPlayback,
+    reducedRoom, reducedResume, loopBoundary, looped, loopPlayback });
   await context.close();
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   const small = await mobile.newPage();
