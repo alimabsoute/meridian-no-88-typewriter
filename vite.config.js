@@ -2,10 +2,11 @@ import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { comingSoonPreviewsPlugin } from './scripts/copy-coming-soon-previews.mjs';
 import { landingShellPlugin } from './scripts/landing-shell-plugin.mjs';
+import { updatesSignupShellPlugin } from './scripts/updates-signup-shell-plugin.mjs';
 
 export default defineConfig({
   base: './',
-  plugins: [viteSingleFile(), comingSoonPreviewsPlugin(), landingShellPlugin()],
+  plugins: [viteSingleFile(), comingSoonPreviewsPlugin(), updatesSignupShellPlugin(), landingShellPlugin()],
   test: {
     // Geometry sweeps, dense-paper persistence, and the authored room raster
     // are intentionally CPU-heavy. Serial files keep their wall-clock guards

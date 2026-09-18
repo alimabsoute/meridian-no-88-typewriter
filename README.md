@@ -55,8 +55,9 @@ double-click it, and enter the machine. The core simulator works offline in one 
 file and needs a current WebGL 2 browser with graphics acceleration. Ordinary
 `file://` use deliberately makes no video, poster or painting requests and shows
 a dark TV and linen artwork fallbacks, even if a media folder is adjacent. To use
-the optional media offline, serve the extracted web ZIP over HTTP on localhost
-with its `media/` folder intact. No special browser file-access flags are needed.
+the local artwork and TV standby card offline, serve the extracted web ZIP over
+HTTP on localhost with its `media/` folder intact. The Archive news playlist and
+email signup require Internet access. No special browser file-access flags are needed.
 
 ### Controls
 
@@ -136,12 +137,21 @@ The fictional Octoberline 211 combines documented manual-typewriter mechanisms w
 
 The PECO Building scene is an original procedural landmark study. No source
 photographs or video frames are used for that landmark model. The optional room TV
-separately includes public-domain archival footage documented in
-[Philadelphia media sources](docs/philly-media-sources.md). Octoberline 211 is not affiliated
+now references a dated WPVI/6abc Archive playlist; source and playback limitations
+are documented in [Philadelphia media sources](docs/philly-media-sources.md).
+The older public-domain film remains a test fixture. Octoberline 211 is not affiliated
 with or endorsed by PECO.
 
 ## Publishing
 
-Every push to `main` runs the complete release verification with the hosted runner's Chrome installation, rebuilds the single-file simulator, preview routes, named release asset, and deterministic web ZIP, and deploys `dist/` to GitHub Pages through `.github/workflows/pages.yml`. The verified prebuilt `dist/` artifact is also deployed to the Vercel production project at [octoberline211.com](https://octoberline211.com/).
+Production now needs deployment from the project root, including `api/`; uploading
+only `dist/` will omit the collector. The updates signup uses `api/updates-signup.js` and a private
+Google Sheet receiver. Setup and the unconfigured-state behavior are documented
+in [updates signup](docs/updates-signup.md). Static web ZIP/GitHub Pages hosting
+does not itself run this API. No email is reported saved without an API confirmation.
+
+Pushes to `main` and `codex/**` run release checks with the hosted runner's Chrome installation. After those checks pass on `main`, `.github/workflows/pages.yml` rebuilds the single-file simulator, preview routes, named release asset, and deterministic web ZIP, then deploys `dist/` to GitHub Pages.
+
+The existing Vercel project is now Git-connected to this repository with `main` as its production branch. A push to `main` can deploy [octoberline211.com](https://octoberline211.com/) before GitHub Actions finishes. Push release candidates to a `codex/**` branch, verify its checks and Vercel preview, then merge only when a production release is intended. Vercel builds from the project root so `api/` is included. Observe the Git-triggered deployment at the resulting commit; a second `vercel --prod` after that push is unnecessary. The connection and a Git-source preview were verified on September 18, 2026; a real commit-triggered production deployment still needs verification.
 
 Copyright © 2026 alimabsoute. All rights reserved.

@@ -3,3 +3,7 @@ visual-checks/
 docs/
 node_modules/
 .git/
+work/
+outputs/
+.env
+.env.*

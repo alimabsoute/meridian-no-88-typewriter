@@ -8,8 +8,10 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23090d0c'/%3E%3Cpath d='M12 17h40v25H12zM8 42h48v9H8z' fill='%23d7b36e'/%3E%3Cpath d='M18 23h28v13H18z' fill='%23eee4ce'/%3E%3C/svg%3E" />
     <title>Octoberline 211 — A free typewriter for your next page</title>
     <!-- LANDING_STYLE -->
+    <!-- UPDATES_SIGNUP_STYLE -->
   </head>
-  <body>
+  <body class="updates-app">
+    <!-- UPDATES_SIGNUP -->
     <main id="app" class="landing-active">
       <!-- LANDING_BOOTSTRAP -->
       <dialog id="landing-guide" aria-labelledby="landing-guide-title">
@@ -179,7 +181,16 @@
             </label>
           </div>
           <button class="atmosphere-pause" id="atmosphere-pause" type="button" aria-pressed="false"><span>ATMOSPHERE MOTION</span><b>RUNNING</b></button>
-          <button class="atmosphere-pause" id="tv-toggle" type="button" aria-pressed="true"><span>PHILADELPHIA FILM ARCHIVE</span><b>ON · SILENT</b></button>
+          <button class="atmosphere-pause" id="tv-toggle" type="button" aria-pressed="true"><span>PHILADELPHIA TELEVISION</span><b>ON</b></button>
+          <div class="television-sound" role="group" aria-label="Television sound">
+            <button id="tv-mute" type="button" aria-label="Mute television" aria-pressed="true">Sound off</button>
+            <label for="tv-volume">TV volume</label>
+            <input id="tv-volume" type="range" min="0" max="1" step="0.01" value="0.28" />
+          </div>
+          <div class="television-program">
+            <p><span>6ABC / WPVI · FROM THE ARCHIVE</span><a id="tv-source" href="https://archive.org/" target="_blank" rel="noopener noreferrer">Action News recordings</a></p>
+            <button id="tv-next" type="button">Next clip →</button>
+          </div>
           <details class="audio-mix">
             <summary>AUDIO MIX</summary>
             <label><span>Machine</span><input id="machine-volume" type="range" min="0" max="1" step="0.01" /></label>
@@ -252,19 +263,67 @@
 
       <aside class="first-sheet-coach ui-layer" id="first-sheet-coach" role="region" aria-labelledby="coach-title" hidden>
         <header>
-          <span>FIRST SHEET · <b id="coach-progress">01 / 05</b></span>
+          <span>YOUR FIRST SHEET <b id="coach-progress">01 / 05</b></span>
           <button id="coach-dismiss" type="button" aria-label="Dismiss first-sheet guide">×</button>
         </header>
-        <h2 id="coach-title">Let the machine answer.</h2>
+        <h2 id="coach-title">A few keys. A world of words.</h2>
         <ol>
-          <li class="active" data-coach-action="type"><b>01</b><span>Strike any letter and watch its typebar meet the ribbon.</span></li>
-          <li data-coach-action="shift"><b>02</b><span>Hold Shift for a capital. The entire basket moves.</span></li>
-          <li data-coach-action="return"><b>03</b><span>Press Enter to return the carriage and feed one line.</span></li>
-          <li data-coach-action="bell"><b>04</b><span>The bell sounds five spaces before the right margin.</span></li>
-          <li data-coach-action="release"><b>05</b><span>Open Paper and release the sheet when the page is ready.</span></li>
+          <li class="active" data-coach-action="type">
+            <p class="coach-instruction"><strong>Tap any letter on your keyboard.</strong> Watch it leave a little ink on the page.</p>
+            <div class="coach-demo coach-demo-type" aria-hidden="true">
+              <div class="coach-page"><span class="coach-page-ink">a<span class="coach-ink-caret">│</span></span><i></i><i></i></div>
+              <span class="coach-demo-connector">↑ <small>KEY → INK</small></span>
+              <div class="coach-keyboard">
+                <div class="coach-key-row"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd><kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></div>
+                <div class="coach-key-row"><kbd class="coach-key-active">A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>G</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></div>
+                <div class="coach-key-row"><kbd class="coach-key-wide">Shift</kbd><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd><kbd>B</kbd><kbd>N</kbd><kbd>M</kbd><kbd class="coach-key-wide">Enter ↵</kbd></div>
+              </div>
+            </div>
+          </li>
+          <li data-coach-action="shift">
+            <p class="coach-instruction"><strong>Hold Shift, then tap a letter.</strong> A small change makes a capital impression.</p>
+            <div class="coach-demo coach-demo-shift" aria-hidden="true">
+              <div class="coach-case-change"><span>a</span><i>→</i><span>A</span></div>
+              <span class="coach-demo-connector"><small>HOLD SHIFT + TAP A LETTER</small></span>
+              <div class="coach-keyboard">
+                <div class="coach-key-row"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd><kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></div>
+                <div class="coach-key-row"><kbd class="coach-key-active">A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>G</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></div>
+                <div class="coach-key-row"><kbd class="coach-key-wide coach-key-held">Shift ↑</kbd><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd><kbd>B</kbd><kbd>N</kbd><kbd>M</kbd><kbd class="coach-key-wide">Enter ↵</kbd></div>
+              </div>
+            </div>
+          </li>
+          <li data-coach-action="return">
+            <p class="coach-instruction"><strong>At the end of a line, press Enter.</strong> The top carriage slides back to the start and the paper feeds a new line.</p>
+            <div class="coach-demo coach-demo-return" aria-hidden="true">
+              <div class="coach-carriage-label"><span>START</span><span>END OF LINE</span></div>
+              <div class="coach-carriage-track"><i class="coach-carriage-marker"></i></div>
+              <div class="coach-return-path"><span>←</span><small>RETURN TO START</small><b>↵</b><small>NEW LINE</small></div>
+              <div class="coach-keyboard">
+                <div class="coach-key-row"><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd><kbd>Y</kbd><kbd>U</kbd><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></div>
+                <div class="coach-key-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>G</kbd><kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></div>
+                <div class="coach-key-row"><kbd class="coach-key-wide">Shift</kbd><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd><kbd>B</kbd><kbd>N</kbd><kbd>M</kbd><kbd class="coach-key-wide coach-key-active">Enter ↵</kbd></div>
+              </div>
+            </div>
+          </li>
+          <li data-coach-action="bell">
+            <p class="coach-instruction"><strong>Hear a ding? Your line is nearly full.</strong> Five spaces remain. Press Enter whenever you are ready for a new line.</p>
+            <div class="coach-demo coach-demo-bell" aria-hidden="true">
+              <div class="coach-bell-scene"><span class="coach-bell-waves">((</span><svg class="coach-bell" viewBox="0 0 48 48"><path d="M12 31V21a12 12 0 0 1 24 0v10l5 5H7l5-5Zm8 9a4 4 0 0 0 8 0M24 5v4"/></svg><span class="coach-bell-waves">))</span><b>DING</b></div>
+              <div class="coach-margin-demo"><span>YOUR WORDS</span><i></i><i></i><i></i><i></i><i></i><b>│</b></div>
+              <div class="coach-demo-caption">5 SPACES LEFT <span>→</span> <kbd class="coach-key-active">Enter ↵</kbd></div>
+            </div>
+          </li>
+          <li data-coach-action="release">
+            <p class="coach-instruction"><strong>Finished a page? Open Paper below.</strong> Choose Release sheet, then file it, crumple it, or put it back in the machine.</p>
+            <div class="coach-demo coach-demo-release" aria-hidden="true">
+              <div class="coach-release-scene"><div class="coach-release-paper"><i></i><i></i><i></i></div><div class="coach-release-platen"></div><span>↑</span></div>
+              <div class="coach-release-flow"><span class="coach-demo-control">Paper</span><b>→</b><span class="coach-demo-control coach-demo-control-active">Release sheet ↑</span></div>
+              <div class="coach-demo-caption">YOUR PAGE, READY TO KEEP.</div>
+            </div>
+          </li>
         </ol>
         <div class="coach-actions">
-          <button id="coach-next" type="button">NEXT</button>
+          <button id="coach-next" type="button">NEXT TIP →</button>
           <button id="coach-skip" type="button">SKIP GUIDE</button>
         </div>
       </aside>

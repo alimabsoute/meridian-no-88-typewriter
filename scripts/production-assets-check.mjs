@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const targetUrl = process.env.TARGET_URL || 'https://octoberline211.com/';
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const paths = ['index.html', 'media/philly-tv.mp4', 'media/philly-tv-poster.jpg', 'media/philly-wall-art.png'];
+const paths = ['index.html', 'media/philly-tv.mp4', 'media/philly-tv-standby.svg', 'media/philly-wall-art.png'];
 const report = { targetUrl, sourceSha: process.env.GITHUB_SHA || null, checkedAt: new Date().toISOString(), assets: [] };
 await mkdir('visual-checks/production', { recursive: true });
 try {

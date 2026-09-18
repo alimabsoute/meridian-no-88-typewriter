@@ -1,0 +1,28 @@
+<aside class="updates-rail" id="updates-rail" aria-labelledby="updates-title">
+  <div class="updates-rail-inner">
+    <div class="updates-copy">
+      <strong id="updates-title">Sign up for updates</strong>
+      <span>New features. Fresh pages.</span>
+    </div>
+    <form class="updates-form" id="updates-form" aria-labelledby="updates-title">
+      <div class="updates-entry">
+        <label class="updates-sr-only" for="updates-email">Your email address</label>
+        <input id="updates-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="Your email address" maxlength="254" required aria-describedby="updates-privacy updates-status" />
+        <div class="updates-honeypot" aria-hidden="true"><label for="updates-website">Website</label><input id="updates-website" name="website" type="text" tabindex="-1" autocomplete="off" /></div>
+        <button id="updates-submit" type="submit" disabled><span>Keep me posted</span><i aria-hidden="true">↗</i></button>
+      </div>
+      <p id="updates-privacy">Product updates from Octoberline. Your email stays private.</p>
+      <p id="updates-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <noscript><p class="updates-no-script">Enable JavaScript to sign up for updates.</p></noscript>
+    </form>
+  </div>
+</aside>
+<dialog class="updates-receipt" id="updates-receipt" aria-labelledby="updates-receipt-title" aria-describedby="updates-receipt-description">
+  <div class="updates-confetti" aria-hidden="true"></div>
+  <button class="updates-receipt-dismiss" type="button" aria-label="Close signup confirmation">×</button>
+  <span class="updates-receipt-mark" aria-hidden="true">✓</span>
+  <p class="updates-receipt-kicker">A NOTE FROM OCTOBERLINE 211</p>
+  <h2 id="updates-receipt-title">Thanks for signing up.</h2>
+  <p id="updates-receipt-description">We’ll keep you up to date with new features.<br />Until then, the page is yours.</p>
+  <button class="updates-receipt-done" type="button">Back to the page <span aria-hidden="true">→</span></button>
+</dialog>

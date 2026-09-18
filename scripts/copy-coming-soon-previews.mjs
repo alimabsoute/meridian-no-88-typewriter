@@ -2,6 +2,7 @@ import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { renderUpdatesSignup } from './updates-signup-shell-plugin.mjs';
 
 const PREVIEW_RUNTIME_FILES = Object.freeze([
   ['coming-soon/community/index.html', 'coming-soon/community/index.html'],
@@ -79,7 +80,11 @@ export async function copyComingSoonPreviews({
     const destination = path.join(outDir, destinationRelative);
     await stat(source);
     await mkdir(path.dirname(destination), { recursive: true });
-    await copyFile(source, destination);
+    if (sourceRelative.endsWith('/index.html')) {
+      await writeFile(destination, await renderUpdatesSignup(await readFile(source, 'utf8')), 'utf8');
+    } else {
+      await copyFile(source, destination);
+    }
 
     const contents = await readFile(destination);
     files.push({

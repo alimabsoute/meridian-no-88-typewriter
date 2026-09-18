@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { PHILADELPHIA_NEWS_CLIPS } from './philadelphia-news.js';
+import { TelevisionVideoTexture } from './television-video-texture.js';
 
 export const ROOM_DECOR_MEDIA = Object.freeze({
   film: './media/philly-tv.mp4',
-  poster: './media/philly-tv-poster.jpg',
+  poster: './media/philly-tv-standby.svg',
   art: './media/philly-wall-art.png',
 });
 
@@ -52,6 +54,10 @@ export class PhiladelphiaRoomDecor {
     parent,
     reducedMotion = false,
     tvPlaying = true,
+    tvVolume = 0.28,
+    nativeVideo = false,
+    deferPlayback = false,
+    playlist = PHILADELPHIA_NEWS_CLIPS,
     paused = false,
     documentRef = typeof document === 'undefined' ? null : document,
     textureLoader = null,
@@ -68,6 +74,17 @@ export class PhiladelphiaRoomDecor {
     this.visible = true;
     this.reducedMotion = Boolean(reducedMotion);
     this.tvEnabled = Boolean(tvPlaying);
+    this.nativeVideo = Boolean(nativeVideo);
+    this.deferPlayback = Boolean(deferPlayback);
+    // Start every visit quietly. Sound is enabled by an explicit user gesture;
+    // a saved volume must never make entry unexpectedly start a news broadcast.
+    this.muted = true;
+    this.volume = Number.isFinite(tvVolume) ? THREE.MathUtils.clamp(tvVolume, 0, 1) : 0.28;
+    this.playlist = playlist.length ? playlist : PHILADELPHIA_NEWS_CLIPS;
+    this.clipIndex = 0;
+    this.failedClips = new Set();
+    this.mediaFailures = [];
+    this.onChange = null;
     this.mediaStatus = this.tvEnabled ? 'poster' : 'off';
     this.mediaError = false;
     this.artLoaded = false;
@@ -115,20 +132,38 @@ export class PhiladelphiaRoomDecor {
   _buildTelevision() {
     const group = new THREE.Group();
     group.name = 'PhiladelphiaWallTelevision';
-    group.position.set(-8.7, 5.15, -5.96);
+    group.position.set(-8.8, 5.22, -5.96);
     this.root.add(group);
 
     const mount = this._material(new THREE.MeshStandardMaterial({ color: 0x191a18, roughness: 0.86 }));
     const bezel = this._material(new THREE.MeshStandardMaterial({ color: 0x252a28, metalness: 0.72, roughness: 0.36 }));
     const edge = this._material(new THREE.MeshStandardMaterial({ color: 0x080c0d, metalness: 0.25, roughness: 0.43 }));
-    // A recessed mount, thin chamfered edge and inset face read as a real flat
-    // panel. Their shallow spacing leaves a contact shadow on the plaster.
-    this._mesh(new THREE.BoxGeometry(2.8, 1.5, 0.08), mount, group, 'TelevisionWallMount', 0, 0, 0);
-    this._mesh(new THREE.ExtrudeGeometry(roundedRectangle(4.48, 2.58, 0.064), {
-      depth: 0.074, bevelEnabled: true, bevelSize: 0.018,
-      bevelThickness: 0.018, bevelSegments: 3, curveSegments: 10, steps: 1,
-    }), bezel, group, 'TelevisionChamferedFrame', 0, 0, 0.065);
-    this._mesh(new THREE.PlaneGeometry(4.42, 2.52), edge, group, 'TelevisionInnerBezel', 0, 0, 0.164);
+    // A real stand-off bracket separates the sculpted back casing from the
+    // plaster. The front glass is half a room unit from the wall, so the side
+    // profile and lower edge remain visible from the writing chair.
+    this._mesh(new THREE.BoxGeometry(2.6, 1.4, 0.09), mount, group, 'TelevisionWallMount', 0, 0, 0.05);
+    for (const x of [-0.92, 0.92]) {
+      this._mesh(new THREE.BoxGeometry(0.14, 1.6, 0.3), mount, group, 'TelevisionMountArm', x, 0, 0.23).castShadow = true;
+    }
+    this._mesh(new THREE.ExtrudeGeometry(roundedRectangle(4.9, 2.7, 0.14), {
+      depth: 0.18, bevelEnabled: true, bevelSize: 0.035,
+      bevelThickness: 0.04, bevelSegments: 3, curveSegments: 12, steps: 1,
+    }), edge, group, 'TelevisionRearHousing', 0, 0, 0.25).castShadow = true;
+    this._mesh(new THREE.ExtrudeGeometry(roundedRectangle(5.4, 3.12, 0.078), {
+      depth: 0.11, bevelEnabled: true, bevelSize: 0.022,
+      bevelThickness: 0.025, bevelSegments: 3, curveSegments: 12, steps: 1,
+    }), bezel, group, 'TelevisionChamferedFrame', 0, 0, 0.365).castShadow = true;
+    this._mesh(new THREE.PlaneGeometry(5.34, 3.06), edge, group, 'TelevisionInnerBezel', 0, 0, 0.503);
+    // The continuous lower lip and discrete rear vents give the casing scale
+    // without turning the room into a conspicuous electronics display.
+    this._mesh(new THREE.BoxGeometry(5.23, 0.027, 0.07), mount, group, 'TelevisionLowerLip', 0, -1.526, 0.477);
+    const vents = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 0.014, 0.13), mount, 18);
+    this.geometries.add(vents.geometry);
+    vents.name = 'TelevisionRearVentSlots';
+    const matrix = new THREE.Matrix4();
+    for (let index = 0; index < 18; index++) vents.setMatrixAt(index, matrix.makeTranslation((index - 8.5) * 0.18, 1.36, 0.33));
+    group.add(vents);
+    this.ventSlots = vents;
 
     const fallback = this._texture(new THREE.DataTexture(new Uint8Array([
       28, 35, 38, 255, 32, 42, 48, 255,
@@ -139,12 +174,12 @@ export class PhiladelphiaRoomDecor {
     this.screenMaterial = this._material(new THREE.MeshBasicMaterial({
       map: fallback, color: 0xb3b7b3, toneMapped: false,
     }));
-    this.screen = this._mesh(new THREE.PlaneGeometry(4.28, 4.28 * 9 / 16), this.screenMaterial,
-      group, 'PhiladelphiaArchiveTelevisionScreen', 0, 0.008, 0.17);
+    this.screen = this._mesh(new THREE.PlaneGeometry(5.18, 5.18 * 9 / 16), this.screenMaterial,
+      group, 'PhiladelphiaArchiveTelevisionScreen', 0, 0.015, 0.509);
     this.screen.receiveShadow = false;
 
     this.ledMaterial = this._material(new THREE.MeshBasicMaterial({ color: 0xbaa67c, toneMapped: false }));
-    this._mesh(new THREE.SphereGeometry(0.010, 8, 6), this.ledMaterial, group, 'TelevisionStandbyLight', 1.97, -1.25, 0.17);
+    this._mesh(new THREE.SphereGeometry(0.012, 8, 6), this.ledMaterial, group, 'TelevisionStandbyLight', 2.38, -1.51, 0.511);
     this.television = group;
     this._syncScreen();
   }
@@ -206,12 +241,15 @@ export class PhiladelphiaRoomDecor {
   _createVideo() {
     if (!this.document || this.localFileMode) return;
     const video = this.document.createElement('video');
-    // CORS rejection must happen at media loading, before an unsafe video can
-    // reach a WebGL texture upload. The packaged HTTP assets are same-origin.
-    video.crossOrigin = 'anonymous';
+    // Native video displays source-hosted news without granting JavaScript
+    // access to its pixels. The optional texture path still requires CORS.
+    if (!this.nativeVideo) video.crossOrigin = 'anonymous';
     video.muted = true;
     video.defaultMuted = true;
-    video.loop = true;
+    video.volume = this.volume;
+    // timeupdate advances bounded excerpts; ended handles recordings shorter
+    // than the selected window. The playlist itself wraps indefinitely.
+    video.loop = false;
     video.playsInline = true;
     video.preload = 'metadata';
     video.disablePictureInPicture = true;
@@ -222,33 +260,57 @@ export class PhiladelphiaRoomDecor {
       video.addEventListener(type, listener);
       this.listeners.push([type, listener]);
     };
+    on('loadedmetadata', () => {
+      if (this.disposed) return;
+      const clip = this.playlist[this.clipIndex];
+      if (clip.start > 0 && clip.start < video.duration) video.currentTime = clip.start;
+      // Older 4:3 broadcasts are pillarboxed, never stretched across 16:9 glass.
+      const aspect = video.videoWidth / video.videoHeight || 16 / 9;
+      if (this.nativeVideo) this.screen.scale.set(1, 1, 1);
+      else this.screen.scale.set(Math.min(1, aspect / (16 / 9)), Math.min(1, (16 / 9) / aspect), 1);
+    });
     on('loadeddata', () => this._showVideoFrame());
+    on('timeupdate', () => {
+      if (!this._shouldPlay() || video.seeking) return;
+      const clip = this.playlist[this.clipIndex];
+      if (Number.isFinite(clip.end) && video.currentTime >= clip.end) this.nextClip();
+    });
+    on('ended', () => { if (this._shouldPlay()) this.nextClip(); });
     on('playing', () => {
       if (!this._shouldPlay()) { video.pause(); return; }
       this.mediaStatus = 'playing';
       this._showVideoFrame();
+      this.onChange?.();
     });
     on('error', () => {
       if (this.disposed) return;
+      this.mediaFailures.push({ clip: this.playlist[this.clipIndex].id,
+        code: video.error?.code ?? null, message: video.error?.message ?? 'Media source unavailable' });
+      if (this.mediaFailures.length > 8) this.mediaFailures.shift();
       this.mediaError = true;
       this.playbackRequested = false;
       this.playRequest += 1;
       this.mediaStatus = this.tvEnabled ? 'unavailable' : 'off';
       video.pause();
       this._syncScreen();
+      // A removed Archive file must not permanently stop the entire rotation.
+      // Try each source once, then stop instead of creating an infinite loop of
+      // failed network requests. The user can explicitly retry with Next clip.
+      this.failedClips.add(this.clipIndex);
+      const available = this.playlist.findIndex((clip, index) => !this.failedClips.has(index));
+      // Select the next healthy clip even while hidden or paused. setClip
+      // defers its network request until motion resumes, avoiding a dead end.
+      if (available >= 0) this.setClip(available);
+      this.onChange?.();
     });
   }
 
   _showVideoFrame() {
     if (this.disposed || !this.tvEnabled || this.mediaError || !this.video || this.video.readyState < 2) return;
+    if (this.nativeVideo) { this._syncScreen(); return; }
     if (!this.videoTexture) {
-      this.videoTexture = this._texture(new THREE.VideoTexture(this.video));
-      const update = this.videoTexture.update.bind(this.videoTexture);
-      // Three's fallback for browsers without video-frame callbacks otherwise
-      // uploads the same frame every render even when the media is paused.
-      this.videoTexture.update = () => {
-        if (this._shouldPlay() && !this.video.paused) update();
-      };
+      this.videoTexture = this._texture(new TelevisionVideoTexture(this.video,
+        () => this._shouldPlay() && !this.video.paused));
       this.videoTexture.needsUpdate = true;
     }
     this._syncScreen();
@@ -271,7 +333,7 @@ export class PhiladelphiaRoomDecor {
   }
 
   _shouldPlay() {
-    return !this.disposed && !this.localFileMode && this.tvEnabled && !this.paused && this.visible
+    return !this.disposed && !this.deferPlayback && !this.localFileMode && this.tvEnabled && !this.paused && this.visible
       && !this.reducedMotion && !this.document?.hidden && !this.mediaError;
   }
 
@@ -290,7 +352,7 @@ export class PhiladelphiaRoomDecor {
       }
       this.playbackRequested = false;
       if (!this.tvEnabled) this.mediaStatus = 'off';
-      else if (!this.mediaError) this.mediaStatus = this.videoTexture ? 'paused' : 'poster';
+      else if (!this.mediaError) this.mediaStatus = this.videoTexture || (this.nativeVideo && this.video.readyState >= 2) ? 'paused' : 'poster';
       return;
     }
     // Ordinary room UI synchronization must neither start another play promise
@@ -299,18 +361,28 @@ export class PhiladelphiaRoomDecor {
     if (this.playbackRequested) return;
     this.playbackRequested = true;
     const request = ++this.playRequest;
-    if (!this.video.getAttribute('src')) this.video.src = ROOM_DECOR_MEDIA.film;
+    if (!this.video.getAttribute('src')) this.video.src = this.playlist[this.clipIndex].src;
     this.mediaStatus = 'loading';
     Promise.resolve(this.video.play()).then(() => {
       if (this.disposed || request !== this.playRequest) return;
       if (!this._shouldPlay()) { this.video.pause(); return; }
       this.mediaStatus = 'playing';
       this._syncScreen();
+      this.onChange?.();
     }).catch(() => {
       if (this.disposed || request !== this.playRequest || !this._shouldPlay()) return;
       this.mediaStatus = 'blocked';
       this._syncScreen();
+      this.onChange?.();
     });
+  }
+
+  beginPlayback() {
+    if (this.disposed || !this.deferPlayback) return false;
+    this.deferPlayback = false;
+    this._syncPlayback();
+    this.onChange?.();
+    return true;
   }
 
   setPaused(paused) {
@@ -328,10 +400,59 @@ export class PhiladelphiaRoomDecor {
     this.tvEnabled = next;
     if (this.tvEnabled && this.mediaError) {
       this.mediaError = false;
+      this.failedClips.clear();
       this.video?.load();
     }
     this._syncPlayback();
     return this.tvEnabled;
+  }
+
+  setClip(index) {
+    if (this.disposed || !Number.isInteger(index) || index < 0 || index >= this.playlist.length) return false;
+    this.playRequest += 1;
+    this.playbackRequested = false;
+    this.video?.pause();
+    this.video?.removeAttribute('src');
+    this.video?.load();
+    if (this.videoTexture) {
+      this.videoTexture.dispose();
+      this.textures.delete(this.videoTexture);
+      this.videoTexture = null;
+    }
+    this.clipIndex = index;
+    this.mediaError = false;
+    this.mediaStatus = this.tvEnabled ? 'poster' : 'off';
+    this.screen.scale.set(1, 1, 1);
+    this._syncPlayback();
+    this.onChange?.();
+    return true;
+  }
+
+  nextClip({ retry = false } = {}) {
+    if (retry) this.failedClips.clear();
+    for (let step = 1; step <= this.playlist.length; step++) {
+      const next = (this.clipIndex + step) % this.playlist.length;
+      if (!this.failedClips.has(next)) return this.setClip(next);
+    }
+    return false;
+  }
+
+  setMuted(muted) {
+    if (this.disposed) return this.muted;
+    this.muted = Boolean(muted);
+    if (this.video) this.video.muted = this.muted;
+    // This method is called directly by the sound button's user gesture, so it
+    // can also retry a playback attempt rejected by an autoplay policy.
+    if (this.mediaStatus === 'blocked') this.playbackRequested = false;
+    this._syncPlayback();
+    return this.muted;
+  }
+
+  setVolume(volume) {
+    if (this.disposed || !Number.isFinite(volume)) return this.volume;
+    this.volume = THREE.MathUtils.clamp(volume, 0, 1);
+    if (this.video) this.video.volume = this.volume;
+    return this.volume;
   }
 
   setReducedMotion(enabled) {
@@ -352,13 +473,20 @@ export class PhiladelphiaRoomDecor {
   getState() {
     return {
       tvEnabled: this.tvEnabled,
+      nativeVideo: this.nativeVideo,
+      awaitingEntry: this.deferPlayback,
       mediaStatus: this.mediaStatus,
       localFileMode: this.localFileMode,
-      paused: this.localFileMode || !this.tvEnabled || this.paused || this.reducedMotion || !this.visible || Boolean(this.document?.hidden),
-      muted: true,
+      paused: this.deferPlayback || this.localFileMode || !this.tvEnabled || this.paused || this.reducedMotion || !this.visible || Boolean(this.document?.hidden),
+      muted: this.muted,
+      volume: this.volume,
       looping: true,
       currentTime: Number(this.video?.currentTime) || 0,
       duration: Number.isFinite(this.video?.duration) ? this.video.duration : 0,
+      clipIndex: this.clipIndex,
+      clipCount: this.playlist.length,
+      clip: { ...this.playlist[this.clipIndex] },
+      mediaFailures: this.mediaFailures.map((failure) => ({ ...failure })),
       artLoaded: this.artLoaded,
       paintings: ['Rocky — Philadelphia Museum of Art', 'Boathouse Row — Blue Hour'],
     };
@@ -367,6 +495,7 @@ export class PhiladelphiaRoomDecor {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.onChange = null;
     this.playRequest += 1;
     this.document?.removeEventListener('visibilitychange', this.onVisibilityChange);
     if (this.video) {
@@ -374,9 +503,11 @@ export class PhiladelphiaRoomDecor {
       this.video.pause();
       this.video.removeAttribute('src');
       this.video.load();
+      this.video.remove?.();
     }
     this.listeners.length = 0;
     this.root.removeFromParent();
+    this.ventSlots?.dispose();
     for (const geometry of this.geometries) geometry.dispose();
     for (const material of this.materials) material.dispose();
     for (const texture of this.textures) texture.dispose();

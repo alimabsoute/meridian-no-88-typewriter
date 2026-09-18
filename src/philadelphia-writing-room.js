@@ -298,6 +298,9 @@ export class PhiladelphiaWritingRoom {
     brightness = 1,
     reducedMotion = false,
     tvPlaying = true,
+    tvVolume = 0.28,
+    nativeVideo = false,
+    deferTVPlayback = false,
     paused = false,
     seed = 88,
     position = null,
@@ -363,7 +366,7 @@ export class PhiladelphiaWritingRoom {
     this._buildLighting();
     this.livingCity = createLivingPhiladelphia(this);
     this._bindRealPecoDisplay();
-    this.decor = new PhiladelphiaRoomDecor({ parent: this.root, reducedMotion: this.reducedMotion, tvPlaying, paused });
+    this.decor = new PhiladelphiaRoomDecor({ parent: this.root, reducedMotion: this.reducedMotion, tvPlaying, tvVolume, nativeVideo, deferPlayback: deferTVPlayback, paused });
 
     this.effectiveQuality = this.qualityMode === 'auto' ? this._chooseInitialQuality() : this.qualityMode;
     this.qualityGovernor = new AdaptiveQualityGovernor(this.effectiveQuality);
