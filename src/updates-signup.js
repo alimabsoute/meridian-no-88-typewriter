@@ -45,12 +45,32 @@ export function mountUpdatesSignup(documentRef = document, windowRef = window) {
   const submit = documentRef.getElementById('updates-submit');
   const label = submit.querySelector('span');
   const status = documentRef.getElementById('updates-status');
+  const toggle = documentRef.getElementById('updates-toggle');
+  const content = documentRef.getElementById('updates-content');
   const receipt = documentRef.getElementById('updates-receipt');
   const confetti = receipt.querySelector('.updates-confetti');
   let pending = false;
   let confettiTimer;
   let restoreFocus;
   const updateInset = () => documentRef.documentElement.style.setProperty('--updates-height', `${Math.ceil(rail.getBoundingClientRect().height)}px`);
+  // Keep the form mounted: collapsing must never discard a draft or cancel a save.
+  function setCollapsed(collapsed) {
+    content.hidden = collapsed;
+    rail.dataset.collapsed = String(collapsed);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? 'Show updates signup' : 'Hide updates signup');
+    toggle.textContent = collapsed ? 'Updates ↓' : 'Hide ↑';
+    updateInset();
+  }
+  if (toggle && content) {
+    toggle.hidden = false;
+    setCollapsed(false);
+    toggle.addEventListener('click', () => {
+      const collapsing = !content.hidden;
+      setCollapsed(collapsing);
+      (collapsing ? toggle : email).focus({ preventScroll: true });
+    });
+  }
   if (documentRef.getElementById('app')) documentRef.body.classList.add('updates-app');
   updateInset();
   const resizeObserver = typeof windowRef.ResizeObserver === 'function' ? new windowRef.ResizeObserver(updateInset) : null;
@@ -65,7 +85,7 @@ export function mountUpdatesSignup(documentRef = document, windowRef = window) {
     if (typeof receipt.close === 'function') receipt.close();
     else receipt.removeAttribute('open');
     clearCelebration();
-    restoreFocus?.focus({ preventScroll: true });
+    (content?.hidden ? toggle : restoreFocus)?.focus({ preventScroll: true });
   }
   function celebrate() {
     restoreFocus = documentRef.activeElement;
@@ -88,7 +108,7 @@ export function mountUpdatesSignup(documentRef = document, windowRef = window) {
   }
   receipt.querySelectorAll('button').forEach(button => button.addEventListener('click', closeReceipt));
   receipt.addEventListener('close', clearCelebration);
-  receipt.addEventListener('cancel', () => { clearCelebration(); restoreFocus?.focus({ preventScroll: true }); });
+  receipt.addEventListener('cancel', () => { clearCelebration(); (content?.hidden ? toggle : restoreFocus)?.focus({ preventScroll: true }); });
   // Typing into the signup or dismissing its receipt must never strike a key.
   rail.addEventListener('keydown', event => event.stopPropagation());
   receipt.addEventListener('keydown', event => {
@@ -127,6 +147,7 @@ export function mountUpdatesSignup(documentRef = document, windowRef = window) {
       status.textContent = 'You’re on the list. Thank you.';
       celebrate();
     } catch (error) {
+      if (content?.hidden) setCollapsed(false);
       status.dataset.error = 'true';
       status.textContent = error?.message || 'We couldn’t save your email. Please try again.';
     } finally {

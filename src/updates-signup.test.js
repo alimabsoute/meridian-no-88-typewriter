@@ -52,7 +52,8 @@ function uiFixture(fetchImpl, { protocol = 'https:', reducedMotion = true } = {}
       replaceChildren() { this.children = []; }, append(item) { this.children.push(item); },
     };
   }
-  const ids = Object.fromEntries(['app', 'updates-rail', 'updates-form', 'updates-email', 'updates-website', 'updates-submit', 'updates-status', 'updates-receipt'].map(id => [id, element()]));
+  const ids = Object.fromEntries(['app', 'updates-rail', 'updates-form', 'updates-email', 'updates-website', 'updates-submit', 'updates-status', 'updates-receipt', 'updates-toggle', 'updates-content'].map(id => [id, element()]));
+  ids['updates-rail'].getBoundingClientRect = () => ({ height: ids['updates-content'].hidden ? 38 : 90 });
   const label = element(); const confetti = element(); const done = element(); const close = element();
   ids['updates-submit'].querySelector = () => label;
   ids['updates-form'].reportValidity = () => true;
@@ -63,10 +64,51 @@ function uiFixture(fetchImpl, { protocol = 'https:', reducedMotion = true } = {}
   const documentRef = { getElementById: id => ids[id], body: element(), documentElement: element(), activeElement: ids['updates-email'], createElement: element };
   const windowRef = { location: { protocol, pathname: '/studio' }, fetch: fetchImpl, addEventListener: vi.fn(), matchMedia: () => ({ matches: reducedMotion }) };
   mountUpdatesSignup(documentRef, windowRef);
-  return { ids, label, confetti, done, close, submit: () => ids['updates-form'].events.submit({ preventDefault() {} }) };
+  return { ids, documentRef, label, confetti, done, close, submit: () => ids['updates-form'].events.submit({ preventDefault() {} }) };
 }
 
 describe('updates signup presentation', () => {
+  it('collapses without losing the email and restores keyboard focus and the room inset', () => {
+    const ui = uiFixture(vi.fn());
+    const toggle = ui.ids['updates-toggle'];
+    expect(toggle.attributes['aria-expanded']).toBe('true');
+    ui.ids['updates-email'].value = 'unfinished@example.org';
+    toggle.events.click();
+    expect(ui.ids['updates-content'].hidden).toBe(true);
+    expect(toggle.attributes['aria-expanded']).toBe('false');
+    expect(toggle.focus).toHaveBeenCalledOnce();
+    expect(ui.documentRef.documentElement.style.setProperty).toHaveBeenLastCalledWith('--updates-height', '38px');
+    toggle.events.click();
+    expect(ui.ids['updates-email'].value).toBe('unfinished@example.org');
+    expect(ui.ids['updates-email'].focus).toHaveBeenCalledOnce();
+    expect(ui.documentRef.documentElement.style.setProperty).toHaveBeenLastCalledWith('--updates-height', '90px');
+  });
+
+  it('reveals a failed pending signup if the reader collapsed its form', async () => {
+    let finish;
+    const ui = uiFixture(() => new Promise(resolve => { finish = resolve; }));
+    ui.ids['updates-email'].value = 'reader@example.org';
+    const saving = ui.submit();
+    ui.ids['updates-toggle'].events.click();
+    finish(response(false, { error: 'Please retry.' }));
+    await saving;
+    expect(ui.ids['updates-content'].hidden).toBe(false);
+    expect(ui.ids['updates-status'].textContent).toBe('Please retry.');
+    expect(ui.ids['updates-email'].value).toBe('reader@example.org');
+  });
+
+  it('returns receipt focus to the visible toggle when signup was collapsed during saving', async () => {
+    let finish;
+    const ui = uiFixture(() => new Promise(resolve => { finish = resolve; }));
+    ui.ids['updates-email'].value = 'reader@example.org';
+    const saving = ui.submit();
+    ui.ids['updates-toggle'].events.click();
+    finish(response(true, { ok: true }));
+    await saving;
+    ui.done.events.click();
+    expect(ui.ids['updates-toggle'].focus).toHaveBeenCalledTimes(2);
+  });
+
   it('blocks duplicate submissions and waits for a confirmed save before celebrating', async () => {
     let finish;
     const fetchImpl = vi.fn(() => new Promise(resolve => { finish = resolve; }));

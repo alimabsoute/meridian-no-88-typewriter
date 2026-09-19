@@ -28,7 +28,7 @@ export function fitRoomOverview(preset, television, width, height, { topInset = 
     points.push(new THREE.Vector3(x, y, 0.53).applyMatrix4(television.matrixWorld));
   }
   // A TV-only portrait fit can clip the keyboard on the opposite edge.
-  for (const x of [-5, 5]) for (const y of [0.2, 5]) for (const z of [-2, 4]) points.push(new THREE.Vector3(x, y, z));
+  for (const x of [-5, 5]) for (const y of [0.05, 5]) for (const z of [-2, 4.25]) points.push(new THREE.Vector3(x, y, z));
   for (const point of points) {
     const relative = point.sub(target);
     const depth = relative.dot(forward);

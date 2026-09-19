@@ -39,6 +39,7 @@ class FakeCanvasContext {
   lineTo() {}
 
   stroke() {}
+  strokeText() {}
 
   drawImage() {}
 
