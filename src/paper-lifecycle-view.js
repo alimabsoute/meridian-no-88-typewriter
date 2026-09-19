@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { flexPaperGeometry, paperPerimeterIndices } from './paper-flex.js';
 import { makePaperFiberTexture } from './textures.js';
+import { createPaperMaterial } from './paper-material.js';
 
 const EPSILON = 1e-6;
 
@@ -390,7 +391,7 @@ export class PaperLifecycleView {
     }
 
     const ownedTexture = cloneTexture(texture ?? textureFromMesh(sourceMesh));
-    const material = new THREE.MeshStandardMaterial({
+    const material = createPaperMaterial({
       color: 0xfff4dc,
       map: ownedTexture,
       emissive: 0xffffff,
@@ -974,7 +975,7 @@ export class PaperLifecycleView {
     this.updateStackLayers(entries.length);
     const topEntry = entries.at(-1);
     if (!topEntry?.page) return;
-    const mesh = this.makePageMesh({ texture: textureForPage(topEntry.page) });
+    const mesh = this.makePageMesh({ texture: textureForPage(topEntry.page, 1) });
     const pose = this.manuscriptTopPose(entries.length);
     mesh.position.copy(pose.position);
     mesh.quaternion.copy(pose.quaternion);
@@ -992,7 +993,7 @@ export class PaperLifecycleView {
     const visible = entries.slice(-this.maxVisibleDiscards);
     visible.forEach((entry, index) => {
       const seed = entry.crumple?.seed ?? 1;
-      const mesh = this.makePageMesh({ texture: textureForPage(entry.page) });
+      const mesh = this.makePageMesh({ texture: textureForPage(entry.page, 1) });
       applyPositions(
         mesh.geometry,
         mesh.userData.flatPositions,

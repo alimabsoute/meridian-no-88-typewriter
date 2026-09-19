@@ -55,7 +55,8 @@ html, body { margin: 0; background: #0b0d0c; }
 #landing-assembly { position: absolute; inset: -7% -8% 0 -11%; }
 #landing-assembly canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 650ms ease; mask-image: linear-gradient(to right, transparent, #000 5%, #000 97%, transparent), linear-gradient(to bottom, #000 84%, transparent 100%); mask-composite: intersect; }
 #landing-assembly.assembly-visible canvas { opacity: 1; }
-.landing-prelude { --overture-cycle: 36s; --paper-stock: repeating-linear-gradient(4deg, #8b775503 0 1px, transparent 1px 3px), linear-gradient(103deg, #d3c7a9, #eee7d3 8%, #f2ebd7 55%, #e3d9c1 92%, #c4b699); position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; opacity: 1; transition: opacity 200ms ease 560ms, visibility 0s 760ms; mask-image: linear-gradient(to right, transparent, #000 5%, #000 97%, transparent), linear-gradient(to bottom, #000 84%, transparent 100%); mask-composite: intersect; }
+#landing-assembly .landing-assembly-still { transition: none; pointer-events: none; }
+.landing-prelude { --overture-cycle: 36s; --paper-stock: repeating-linear-gradient(4deg, #8b775503 0 1px, transparent 1px 3px), linear-gradient(103deg, #d3c7a9, #eee7d3 8%, #f2ebd7 55%, #e3d9c1 92%, #c4b699); position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; opacity: 1; transition: opacity 260ms ease 1050ms, visibility 0s 1310ms; mask-image: linear-gradient(to right, transparent, #000 5%, #000 97%, transparent), linear-gradient(to bottom, #000 84%, transparent 100%); mask-composite: intersect; }
 .prelude-paper-frame { position: absolute; left: 53%; top: 13%; width: 43%; max-width: 370px; height: 69%; transform: translateX(-50%); perspective: 1000px; container-type: inline-size; }
 .prelude-paper { position: absolute; inset: 0; padding: 35px 9%; color: #403d32; transform-origin: 50% 72%; transform: rotateX(10deg) rotateY(-10deg) rotateZ(4deg); animation: paper-overture-feed 7s ease-in-out infinite alternate; will-change: transform; }
 .prelude-paper::before { content: ''; position: absolute; inset: 0; z-index: -1; border: 1px solid #eee7d2; border-bottom-color: #cbbda0; border-radius: 1px 2px 8% 1% / 1px 1px 2% 1%; background: var(--paper-stock); box-shadow: inset -7px 0 12px #8d774413, 16px 25px 35px #0004; transition: opacity 180ms ease; }
@@ -67,24 +68,24 @@ html, body { margin: 0; background: #0b0d0c; }
 .prelude-ink-line:nth-child(2) { --ink-x: -7px; --ink-y: -20px; --ink-turn: 1deg; --ink-delay: 24ms; }
 .prelude-ink-line:nth-child(3) { --ink-x: 13px; --ink-y: -13px; --ink-turn: -1.5deg; --ink-delay: 48ms; }
 .prelude-ink-line:nth-child(4) { --ink-x: -11px; --ink-y: -17px; --ink-turn: 1.5deg; --ink-delay: 72ms; }
-.prelude-ink-line > span { display: inline-block; animation: paper-overture-ink var(--overture-cycle) linear infinite both; animation-delay: calc(var(--stanza-delay) + 450ms + var(--letter) * 70ms); }
+.prelude-ink-line > span { display: inline-block; animation: paper-overture-ink var(--overture-cycle) linear infinite both; animation-delay: calc(var(--stanza-delay) + 150ms + var(--letter) * 22ms); }
 .prelude-paper-folio { position: absolute; bottom: 28px; left: 9%; font: 8px/1.4 "Courier New", monospace; letter-spacing: .11em; color: #9e8f70; }
 .prelude-paper-curl { position: absolute; bottom: -1px; left: 0; right: 0; height: 13px; border-radius: 0 0 55% 4%; background: linear-gradient(#ddd2b980, #f0e7d1); transform-origin: center top; animation: paper-overture-curl 7s ease-in-out infinite alternate; box-shadow: 0 5px 5px #0001; transition: opacity 180ms ease; }
 .prelude-paper-fragments { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
-.prelude-paper-fragments > i { position: absolute; left: var(--tile-x); top: var(--tile-y); width: 33.5%; height: 25.2%; opacity: 0; background: var(--paper-stock); background-size: 300% 400%; background-position: var(--grain-x) var(--grain-y); clip-path: polygon(0 1%, 45% 0, 100% 2%, 99% 48%, 100% 100%, 48% 98%, 1% 100%, 0 52%); transform-origin: 50% 70%; }
+.prelude-paper-fragments > i { position: absolute; left: var(--tile-x); top: var(--tile-y); width: 16.9%; height: 12.8%; opacity: 0; background: var(--paper-stock); background-size: 600% 800%; background-position: var(--grain-x) var(--grain-y); clip-path: polygon(0 1%, 45% 0, 100% 2%, 99% 48%, 100% 100%, 48% 98%, 1% 100%, 0 52%); transform-origin: 50% 70%; }
 .prelude-paper-shadow { position: absolute; width: 45%; height: 14%; left: 31%; top: 76%; border-radius: 50%; background: radial-gradient(ellipse, #0008, transparent 69%); animation: paper-overture-shadow 7s ease-in-out infinite alternate; }
 .landing-prelude-light { position: absolute; width: 58%; height: 88%; top: 2%; left: 22%; opacity: .15; background: radial-gradient(ellipse, #f2d8a640, #b98a3809 45%, transparent 68%); transform: rotate(-24deg); animation: paper-overture-lamplight 6.6s ease-in-out infinite alternate; will-change: transform, opacity; mix-blend-mode: screen; }
 #landing-assembly.assembly-visible .landing-prelude { opacity: 0; visibility: hidden; }
 #landing-assembly.assembly-visible :is(.prelude-paper, .prelude-stanza, .prelude-ink-line > span, .prelude-paper-shadow, .prelude-paper-curl, .landing-prelude-light) { animation-play-state: paused; will-change: auto; }
 #landing-assembly.assembly-visible .prelude-paper::before, #landing-assembly.assembly-visible :is(.prelude-paper-imprint, .prelude-paper-folio, .prelude-paper-curl) { opacity: 0; }
 .prelude-paper-imprint, .prelude-paper-folio { transition: opacity 180ms ease; }
-#landing-assembly.assembly-visible .prelude-paper-fragments > i { animation: paper-overture-fragment 680ms cubic-bezier(.18, .65, .35, 1) both; animation-delay: var(--release-delay); }
+#landing-assembly.assembly-visible .prelude-paper-fragments > i { animation: paper-overture-fragment 1120ms cubic-bezier(.18, .65, .35, 1) both; animation-delay: var(--release-delay); }
 #landing-assembly.assembly-visible .prelude-ink-line { animation: paper-overture-ink-release 640ms ease-out both; animation-delay: var(--ink-delay); }
-#landing-assembly[data-assembly-state="disposed"] .landing-prelude *, #intro-overlay.loading .landing-prelude * { animation-play-state: paused; will-change: auto; }
-#intro-overlay.loading .landing-prelude { opacity: 1; visibility: visible; transition: none; }
-#intro-overlay.loading .prelude-paper::before { opacity: 1; transition: none; }
-#intro-overlay.loading .prelude-paper-fragments { display: none; }
-#intro-overlay.loading .prelude-ink-line { animation: none; }
+#landing-assembly[data-assembly-state="disposed"]:not(.assembly-visible) .landing-prelude *, #intro-overlay.loading #landing-assembly:not(.assembly-visible) .landing-prelude * { animation-play-state: paused; will-change: auto; }
+#intro-overlay.loading #landing-assembly:not(.assembly-visible) .landing-prelude { opacity: 1; visibility: visible; transition: none; }
+#intro-overlay.loading #landing-assembly:not(.assembly-visible) .prelude-paper::before { opacity: 1; transition: none; }
+#intro-overlay.loading #landing-assembly:not(.assembly-visible) .prelude-paper-fragments { display: none; }
+#intro-overlay.loading #landing-assembly:not(.assembly-visible) .prelude-ink-line { animation: none; }
 .landing-stage-caption { position: absolute; bottom: 5%; left: 18%; right: 7%; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #a89576; font: 12px/1.5 var(--landing-display); letter-spacing: .15em; text-transform: uppercase; }
 #replay-assembly { display: none; min-height: 44px; border: 0; padding: 8px 0 8px 12px; background: transparent; color: #c9b48c; font: 16px/1.3 var(--landing-display); letter-spacing: .055em; cursor: pointer; }
 #landing-assembly[data-assembly-state="complete"] + .landing-stage-caption #replay-assembly { display: block; }
@@ -107,7 +108,7 @@ html, body { margin: 0; background: #0b0d0c; }
 @keyframes paper-overture-feed { from { transform: translate3d(0, 3.5%, 0) rotateX(12deg) rotateY(-12deg) rotateZ(5deg); } to { transform: translate3d(0, -2%, 8px) rotateX(8deg) rotateY(-9deg) rotateZ(3deg); } }
 @keyframes paper-overture-stanza { 0%, 20.9% { opacity: 1; } 22.5%, 100% { opacity: 0; } }
 @keyframes paper-overture-ink { 0% { opacity: 0; transform: translateY(.6px); } .12% { opacity: .88; transform: translateY(-.2px); } .4%, 24% { opacity: 1; transform: translateY(0); } 25%, 100% { opacity: 0; transform: translateY(0); } }
-@keyframes paper-overture-fragment { 0% { opacity: 0; transform: translate3d(0, 0, 0) rotate(0); } 9%, 22% { opacity: .94; } 100% { opacity: 0; transform: translate3d(var(--flight-x), var(--flight-y), 14px) rotate(var(--flight-turn)); } }
+@keyframes paper-overture-fragment { 0% { opacity: 0; filter: blur(0); transform: translate3d(0, 0, 0) rotate(0) scale(1); } 7%, 16% { opacity: .92; } 55% { opacity: .55; filter: blur(.6px); } 100% { opacity: 0; filter: blur(3px); transform: translate3d(var(--flight-x), var(--flight-y), 14px) rotate(var(--flight-turn)) scale(.12); } }
 @keyframes paper-overture-ink-release { from { opacity: 1; transform: translate3d(0, 0, 0) rotate(0); } to { opacity: 0; transform: translate3d(var(--ink-x), var(--ink-y), 16px) rotate(var(--ink-turn)); } }
 @keyframes paper-overture-curl { from { transform: rotateX(-18deg); } to { transform: rotateX(-2deg); } }
 @keyframes paper-overture-shadow { from { transform: translate3d(0, 0, 0) scale(1); opacity: .65; } to { transform: translate3d(0, -10%, 0) scale(.94); opacity: .42; } }
@@ -149,3 +150,10 @@ html, body { margin: 0; background: #0b0d0c; }
 @media (min-width: 761px) and (max-height: 500px) { .landing-layout { min-height: 440px; } .landing-stage { min-height: 440px; } }
 @media (prefers-reduced-motion: reduce) { #intro-overlay *, #intro-overlay *::before, #intro-overlay *::after { animation: none !important; transition: none !important; } #intro-overlay { transition: none; } .enter-label { background: none; -webkit-text-fill-color: currentColor; } }
 @media (prefers-reduced-motion: reduce) { .prelude-stanza { opacity: 0; } .prelude-stanza:first-child { opacity: 1; } .prelude-ink-line > span { opacity: 1; } .prelude-paper-fragments { display: none; } }
+
+/* One brief paper-to-smoke release; no particles run while the shell waits. */
+.prelude-smoke { position: absolute; left: var(--smoke-x); top: 14%; width: 25%; height: 68%; opacity: 0; border-radius: 50%; background: radial-gradient(ellipse, #e6dfc650, #d2c8b21c 45%, transparent 70%); filter: blur(9px); transform-origin: 50% 90%; }
+#landing-assembly.assembly-visible .prelude-smoke { animation: paper-overture-smoke 1180ms ease-out both; animation-delay: var(--smoke-delay); }
+#landing-assembly.assembly-visible .prelude-paper-shadow, #landing-assembly.assembly-visible .landing-prelude-light { opacity: 0; transition: opacity 450ms ease; }
+@keyframes paper-overture-smoke { 0% { opacity: 0; transform: translate3d(0, 0, 0) scale(.4, .6); } 22% { opacity: .7; } 100% { opacity: 0; transform: translate3d(var(--smoke-drift), -135px, 0) scale(1.7, 1.35); } }
+@media (prefers-reduced-motion: reduce) { #intro-overlay .landing-prelude { transition: opacity 160ms ease, visibility 0s 160ms !important; } .prelude-smoke { display: none; } }

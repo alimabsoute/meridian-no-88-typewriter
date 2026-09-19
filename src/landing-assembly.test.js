@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TypewriterDocument } from './typewriter-document.js';
 import { TypewriterModel } from './typewriter-model.js';
-import { createLandingAnimationClock, createLandingAssemblyParts, disposeLandingScene, startLandingAssembly, waitForLandingPrograms } from './landing-assembly.js';
+import { captureLandingStill, createLandingAnimationClock, createLandingAssemblyParts, disposeLandingScene, startLandingAssembly, waitForLandingPrograms } from './landing-assembly.js';
 
 function canvasDocument() {
   const gradient = { addColorStop() {} };
@@ -23,6 +23,28 @@ describe('real model landing assembly', () => {
   let assembly;
   let geometries;
   let materials;
+
+  it('captures the rendered machine before retiring WebGL, without creating another GPU context', () => {
+    const calls = [];
+    const canvas = { width: 960, height: 720, ownerDocument: { createElement: vi.fn(() => still) } };
+    const still = { setAttribute: vi.fn(), getContext: vi.fn(() => ({ drawImage: (...args) => calls.push(['copy', ...args]) })) };
+    const renderer = { getContext: () => ({ isContextLost: () => false }), render: (...args) => calls.push(['render', ...args]) };
+    const scene = {}, camera = {};
+    expect(captureLandingStill(renderer, scene, camera, canvas)).toBe(still);
+    expect(calls).toEqual([['render', scene, camera], ['copy', canvas, 0, 0]]);
+    expect(still.getContext).toHaveBeenCalledExactlyOnceWith('2d');
+    expect(still).toMatchObject({ width: 960, height: 720, className: 'landing-assembly-still' });
+  });
+
+  it('preserves the paper fallback when no valid preview frame can be captured', () => {
+    expect(captureLandingStill(null, {}, {}, {})).toBeNull();
+    const canvas = { ownerDocument: { createElement: vi.fn() } };
+    expect(captureLandingStill({ getContext: () => ({ isContextLost: () => true }) }, {}, {}, canvas)).toBeNull();
+    expect(canvas.ownerDocument.createElement).not.toHaveBeenCalled();
+    const renderer = { getContext: () => ({ isContextLost: () => false }), render: () => { throw new Error('device lost'); } };
+    canvas.ownerDocument.createElement.mockReturnValue({ setAttribute() {}, getContext: () => ({ drawImage() {} }) });
+    expect(captureLandingStill(renderer, {}, {}, canvas)).toBeNull();
+  });
 
   beforeAll(() => {
     const previous = globalThis.document;

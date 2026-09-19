@@ -7,6 +7,27 @@ const ASSEMBLY_SECONDS = 4.6;
 const IDENTITY = new THREE.Quaternion();
 const VIEW_DIRECTION = new THREE.Vector3(0.42, 0.34, 0.84).normalize();
 const clamp01 = (value) => Math.max(0, Math.min(1, value));
+
+// Keep the last rendered machine on screen while the room opens, without
+// retaining a second WebGL context. Copy immediately after rendering because
+// the browser may clear the default framebuffer between animation frames.
+export function captureLandingStill(renderer, scene, camera, canvas) {
+  if (!renderer || !scene || !camera || !canvas || renderer.getContext().isContextLost()) return null;
+  try {
+    const still = canvas.ownerDocument.createElement('canvas');
+    still.width = canvas.width;
+    still.height = canvas.height;
+    still.className = 'landing-assembly-still';
+    still.setAttribute('aria-hidden', 'true');
+    const context = still.getContext('2d');
+    if (!context) return null;
+    renderer.render(scene, camera);
+    context.drawImage(canvas, 0, 0);
+    return still;
+  } catch {
+    return null;
+  }
+}
 const smooth = (value) => {
   const t = clamp01(value);
   return t * t * t * (t * (t * 6 - 15) + 10);
@@ -470,6 +491,11 @@ export function startLandingAssembly({ container, landing }) {
   };
   const cleanup = () => {
     stopFrame();
+    // Entry is a one-way visual handoff. A graphics failure still falls back
+    // to the paper, but normal entry must never replay the opening overture.
+    const still = phase === 'disposed' && firstRenderAt !== null
+      ? captureLandingStill(renderer, scene, camera, canvas) : null;
+    if (still) container.append(still);
     if (idle) globalThis.cancelIdleCallback?.(idle);
     if (timer) clearTimeout(timer);
     idle = timer = 0;
@@ -502,7 +528,7 @@ export function startLandingAssembly({ container, landing }) {
       renderer = null;
     }
     canvas?.remove();
-    container?.classList.remove('assembly-visible');
+    if (!still) container?.classList.remove('assembly-visible');
   };
   function fail(caught) {
     if (disposed || phase === 'unavailable') return;

@@ -45,7 +45,8 @@ async function state(page, { replay = false } = {}) {
       engine: Boolean(window.__OCTOBERLINE_211__), constructors: window.__landingProof,
       preview: window.__OCTOBERLINE_LANDING__?.assembly?.getState() ?? null,
       replayed,
-      previewCanvases: document.querySelectorAll('#landing-assembly canvas').length,
+      previewCanvases: document.querySelectorAll('#landing-assembly canvas:not(.landing-assembly-still)').length,
+      frozenPreviewCanvases: document.querySelectorAll('#landing-assembly .landing-assembly-still').length,
       prelude: prelude ? {
         visible: getComputedStyle(prelude).visibility !== 'hidden' && Number(getComputedStyle(prelude).opacity) > 0,
         paperVisible: paper.getBoundingClientRect().width > 0 && getComputedStyle(paper).visibility !== 'hidden',
@@ -104,7 +105,9 @@ function assertDisposedPreview(s, { constructed = true } = {}) {
   assert.equal(s.preview.phase, 'disposed');
   assert.equal(s.preview.disposed, true);
   assert.equal(s.preview.activeFrame, false);
-  assert.equal(s.previewCanvases, 0, 'Preview canvas must be removed before the app renders');
+  assert.equal(s.previewCanvases, 0, 'WebGL preview canvas must be removed before the app renders');
+  assert.equal(s.frozenPreviewCanvases, s.preview.frameCount > 0 ? 1 : 0, 'A ready machine must remain as a 2D still during the room handoff');
+  if (s.preview.frameCount > 0) assert.equal(s.preludeVisible, false, 'Entry must not bring the paper overture back over the ready machine');
   if (constructed) {
     assert.equal(s.preview.released.instanceBuffers, 13, 'All authored instanced GPU allocations must be released');
     assert(s.preview.released.geometries > 0 && s.preview.released.textures > 0);
@@ -125,6 +128,7 @@ async function waitForPreview(page) {
   return result;
 }
 async function guide(page) {
+  const hadReadyPreview = await page.evaluate(() => getComputedStyle(document.querySelector('.landing-prelude')).visibility === 'hidden');
   await page.click('#intro-guide');
   await page.waitForFunction(() => document.querySelector('#landing-guide').open);
   assert.equal(await page.evaluate(() => Boolean(window.__OCTOBERLINE_211__)), false);
@@ -132,8 +136,24 @@ async function guide(page) {
   await page.keyboard.press('Escape');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'intro-guide');
   assertIdle(await state(page));
+  if (hadReadyPreview) assert.equal((await state(page)).prelude.visible, false, 'Opening and closing the guide must not replay the overture');
 }
 async function typeAfterEntry(page, text) {
+  await page.evaluate(() => {
+    const intro = document.querySelector('#intro-overlay');
+    const prelude = document.querySelector('.landing-prelude');
+    const assembly = document.querySelector('#landing-assembly');
+    window.__entryHandoffProof = { hadHiddenPrelude: getComputedStyle(prelude).visibility === 'hidden', samples: [] };
+    window.__entryHandoffObserver = new MutationObserver(() => {
+      if (!intro.classList.contains('loading') || intro.classList.contains('dismissed')) return;
+      window.__entryHandoffProof.samples.push({
+        preludeVisible: getComputedStyle(prelude).visibility !== 'hidden' && Number(getComputedStyle(prelude).opacity) > 0,
+        phase: assembly.dataset.assemblyState,
+        frozen: Boolean(assembly.querySelector('.landing-assembly-still')),
+      });
+    });
+    window.__entryHandoffObserver.observe(intro, { attributes: true, subtree: true, childList: true });
+  });
   await enterStudio(page);
   await page.waitForFunction(() => window.__OCTOBERLINE_LANDING__.status === 'ready');
   await page.keyboard.type(text, { delay: 90 });
@@ -158,13 +178,23 @@ async function typeAfterEntry(page, text) {
     });
     throw new Error(`Entry typing failed: ${JSON.stringify({ expected: text, mechanics, diagnostic })}`, { cause: error });
   }
-  const result = await page.evaluate(() => ({
+  const result = await page.evaluate(() => {
+    window.__entryHandoffObserver.disconnect();
+    return {
+    handoff: window.__entryHandoffProof,
     text: window.__OCTOBERLINE_211__.document.toPlainText(), captured: window.__OCTOBERLINE_211__.keyboardCaptured,
     status: window.__OCTOBERLINE_LANDING__.status, constructors: window.__landingProof,
     preview: window.__OCTOBERLINE_LANDING__.assembly?.getState() ?? null,
-    previewCanvases: document.querySelectorAll('#landing-assembly canvas').length,
+    previewCanvases: document.querySelectorAll('#landing-assembly canvas:not(.landing-assembly-still)').length,
+    frozenPreviewCanvases: document.querySelectorAll('#landing-assembly .landing-assembly-still').length,
+    preludeVisible: getComputedStyle(document.querySelector('.landing-prelude')).visibility !== 'hidden',
     contexts: window.__landingContextRecords.map(({ canvas, context }) => ({ connected: canvas.isConnected, lost: context.isContextLost() })),
-  }));
+  }; });
+  if (result.handoff.hadHiddenPrelude) {
+    assert(result.handoff.samples.length > 0, 'Observe the actual loading handoff before the overlay disappears');
+    assert(result.handoff.samples.every(sample => !sample.preludeVisible), 'No CTA loading mutation may restore the already-hidden paper');
+    assert(result.handoff.samples.filter(sample => sample.phase === 'disposed').every(sample => sample.frozen), 'GPU disposal must keep the captured machine visible');
+  }
   assert(result.constructors.webgl > 0 && result.captured);
   return { ...result, mechanics };
 }

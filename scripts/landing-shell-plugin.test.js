@@ -7,7 +7,7 @@ describe('streamable standalone landing', () => {
     const source = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const html = landingShellPlugin().transformIndexHtml.handler(source);
     const overture = html.slice(html.indexOf('<div class="landing-prelude"'), html.indexOf('<div class="landing-stage-caption"'));
-    expect(overture.length).toBeLessThan(18000);
+    expect(overture.length).toBeLessThan(30000);
     expect(overture).toContain('class="prelude-paper"');
     expect(overture).toContain('class="prelude-ink-line"');
     const words = overture.replace(/<[^>]*>/g, '');
@@ -15,7 +15,8 @@ describe('streamable standalone landing', () => {
     expect(words).toContain('Words cross distance.');
     expect(words).toContain('No permission needed.');
     expect(overture.match(/class="prelude-stanza"/g)).toHaveLength(4);
-    expect(overture.match(/--release-delay:/g)).toHaveLength(12);
+    expect(overture.match(/--release-delay:/g)).toHaveLength(48);
+    expect(overture.match(/class="prelude-smoke"/g)).toHaveLength(6);
     expect(overture).not.toMatch(/<img|<canvas|<video|data:image|src=/);
     expect(html.indexOf('class="landing-prelude"')).toBeLessThan(html.indexOf('src="/src/main.js"'));
     expect(html).toContain('paper-overture-feed');

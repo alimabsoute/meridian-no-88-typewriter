@@ -148,7 +148,10 @@ if (!webglContext) {
   throw new Error('WebGL 2 is unavailable.');
 }
 const renderer = new THREE.WebGLRenderer({ canvas, context: webglContext, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowQuality ? 1 : 1.75));
+// Keep native screen detail stable without forcing supersampling on smaller
+// displays. Ink filtering must remain correct at DPR 1 as well as high DPI.
+const writingPixelRatio = () => lowQuality ? 1 : Math.min(2, window.devicePixelRatio || 1);
+renderer.setPixelRatio(writingPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.shadowMap.enabled = !lowQuality;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -256,7 +259,8 @@ const atmosphereAudio = new AtmosphereAudio({
   },
   seed: 88,
 });
-let paperRenderer = new PaperRenderer(page);
+const paperTextureOptions = { maxTextureSize: renderer.capabilities.maxTextureSize };
+let paperRenderer = new PaperRenderer(page, paperTextureOptions);
 document.fonts.ready.then(() => paperRenderer.redraw(page));
 
 const refs = Object.fromEntries([
@@ -607,7 +611,7 @@ function rendererForPaperSelection(selection) {
   const activeId = lifecycle.getOverview().insertedSheet?.id;
   if (selection.summary.id === activeId) return { renderer: paperRenderer, temporary: false };
   const selectedDocument = TypewriterDocument.deserialize(selection.page.content);
-  return { renderer: new PaperRenderer(selectedDocument), temporary: true };
+  return { renderer: new PaperRenderer(selectedDocument, { ...paperTextureOptions, displayScale: 1 }), temporary: true };
 }
 
 function paperThumbnail(summary) {
@@ -1033,10 +1037,10 @@ const paperView = new PaperLifecycleView({
   onEvent: handlePaperRitualEvent,
 });
 
-function textureForLifecyclePage(record, temporaryTextures) {
+function textureForLifecyclePage(record, temporaryTextures, displayScale = 2) {
   try {
     const archivedDocument = TypewriterDocument.deserialize(record.content);
-    const archivedRenderer = new PaperRenderer(archivedDocument);
+    const archivedRenderer = new PaperRenderer(archivedDocument, { ...paperTextureOptions, displayScale });
     temporaryTextures.push(archivedRenderer.texture);
     return archivedRenderer.texture;
   } catch {
@@ -1048,7 +1052,7 @@ function syncPaperSceneFromLifecycle() {
   const temporaryTextures = [];
   lifecycleState = lifecycle.snapshot();
   paperView.syncFromState(lifecycleState, {
-    textureForPage: (record) => textureForLifecyclePage(record, temporaryTextures),
+    textureForPage: (record, displayScale) => textureForLifecyclePage(record, temporaryTextures, displayScale),
   });
   for (const texture of temporaryTextures) texture.dispose();
 }
@@ -1596,7 +1600,7 @@ function finishPaperAction({ refocus = false } = {}) {
 
 function installDocumentFromRecord(record, { animateLoad = false, visible = true } = {}) {
   page = documentFromPaperRecord(record, record.sheetNumber);
-  paperRenderer = new PaperRenderer(page);
+  paperRenderer = new PaperRenderer(page, paperTextureOptions);
   model.setDocument(page, paperRenderer, { animateLoad });
   model.paperMesh.visible = visible;
   refs['margin-warning'].classList.remove('show');
@@ -2176,15 +2180,22 @@ function resize() {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowQuality ? 1 : width < 760 ? 1.35 : 1.75));
+  renderer.setPixelRatio(writingPixelRatio());
 }
 
 window.addEventListener('resize', resize);
 
+// Header collapse changes the usable room area without resizing the viewport.
+const signupRail = document.querySelector('.updates-rail');
+if (signupRail && typeof ResizeObserver === 'function') {
+  new ResizeObserver(() => {
+    if (currentCameraView === 'front' && !inspectionEnabled && !cameraMotion
+      && refs['intro-overlay'].classList.contains('dismissed')) setCameraView('front', 0.2);
+  }).observe(signupRail);
+}
+
 let lastTime = performance.now();
 let uiAccumulator = 0;
-let frameAccumulator = 0;
-let frameCount = 0;
 
 function updateLiveUi(delta) {
   uiAccumulator += delta;
@@ -2224,14 +2235,8 @@ function animate(now) {
   renderer.render(scene, camera);
   televisionControls?.update();
   televisionSurface?.update();
-  frameAccumulator += delta;
-  frameCount += 1;
-  if (frameCount >= 180) {
-    const average = frameAccumulator / frameCount;
-    if (!lowQuality && average > 0.024 && renderer.getPixelRatio() > 1.26) renderer.setPixelRatio(1.25);
-    frameAccumulator = 0;
-    frameCount = 0;
-  }
+  // Preserve type and key detail: slow room frames must not silently degrade
+  // the writing surface. Explicit low quality remains available at DPR 1.
 }
 
 const workbench = initWorkbench({

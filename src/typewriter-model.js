@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeSurfaceGrain } from './material-craft.js';
 import { stepPaperResponse } from './paper-response.js';
 import { paperPerimeterIndices } from './paper-flex.js';
+import { createPaperMaterial } from './paper-material.js';
 import {
   makeBadgeTexture,
   makeCrinkleTexture,
@@ -472,12 +473,12 @@ export class TypewriterModel {
       felt: new THREE.MeshStandardMaterial({ color: 0x261c16, roughness: 1 }),
       ivory: new THREE.MeshPhysicalMaterial({ color: 0xded3b8, roughness: 0.25, clearcoat: 0.55, clearcoatRoughness: 0.18 }),
       glass: new THREE.MeshPhysicalMaterial({ color: 0xdde1d5, roughness: 0.08, transmission: 0.16, thickness: 0.06, clearcoat: 1 }),
-      paper: new THREE.MeshStandardMaterial({ map: this.paperRenderer.texture, bumpMap: makePaperFiberTexture(), bumpScale: 0.008, roughness: 0.92, metalness: 0, side: THREE.DoubleSide }),
+      paper: createPaperMaterial({ map: this.paperRenderer.texture, bumpMap: makePaperFiberTexture(), bumpScale: 0.004 }),
       paperEdge: new THREE.MeshStandardMaterial({ color: 0xd8ccb3, roughness: 0.96, side: THREE.DoubleSide }),
       ribbonBlack: new THREE.MeshStandardMaterial({ color: 0x141715, bumpMap: fabric, bumpScale: 0.002, roughness: 0.88, metalness: 0.02, side: THREE.DoubleSide }),
       ribbonRed: new THREE.MeshStandardMaterial({ color: 0x782019, bumpMap: fabric, bumpScale: 0.002, roughness: 0.87, metalness: 0.02, side: THREE.DoubleSide }),
-      wood: new THREE.MeshStandardMaterial({ map: makeWoodTexture(), color: 0x8a5a38, roughness: 0.5, metalness: 0 }),
-      leather: new THREE.MeshStandardMaterial({ color: 0x211812, roughness: 0.73, metalness: 0.02 }),
+      wood: new THREE.MeshStandardMaterial({ map: makeWoodTexture(), color: 0xffffff, roughness: 0.72, metalness: 0 }),
+      leather: new THREE.MeshStandardMaterial({ color: 0x97866d, roughness: 0.93, metalness: 0 }),
       wall: new THREE.MeshStandardMaterial({ color: 0x161a16, roughness: 1, metalness: 0 }),
       redIndicator: new THREE.MeshStandardMaterial({ color: 0x8f251c, roughness: 0.38, metalness: 0.45 }),
     };
@@ -1228,7 +1229,8 @@ export class TypewriterModel {
     const group = new THREE.Group();
     group.name = `Key_${code}`;
     group.position.set(x, y, z);
-    group.rotation.x = -0.09;
+    // Tip the entire key face toward the writer, including its hit targets.
+    group.rotation.x = 0.24;
     const stem = new THREE.Mesh(this.roundKeyGeometry.stem, this.materials.darkSteel);
     stem.position.y = -0.19;
     group.add(stem);
@@ -1236,7 +1238,9 @@ export class TypewriterModel {
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.045;
     group.add(ring);
-    const labelMaterial = new THREE.MeshPhysicalMaterial({ map: makeKeyLabelTexture(primary, secondary), roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.3 });
+    // Printed faces use their ivory shading from the texture; scene exposure
+    // must not bleach the black legends. The surrounding metal remains lit.
+    const labelMaterial = new THREE.MeshBasicMaterial({ map: makeKeyLabelTexture(primary, secondary), toneMapped: false });
     const cap = new THREE.Mesh(this.roundKeyGeometry.cap, this.materials.agedBrass);
     cap.position.y = 0.025;
     group.add(cap);
@@ -1258,7 +1262,7 @@ export class TypewriterModel {
 
     const record = {
       code, lower, upper, group, stem, cap, ring, labelDisc, lever, link, leverStart, leverEnd, linkEndBase, typebar,
-      baseY: y, baseRotationX: -0.09, depression: 0, phase: -1,
+      baseY: y, baseRotationX: 0.24, depression: 0, phase: -1,
       action: 'character',
     };
     group.userData.keyRecord = record;
@@ -1273,13 +1277,13 @@ export class TypewriterModel {
     const group = new THREE.Group();
     group.name = `Key_${code}`;
     group.position.set(x, y, z);
-    group.rotation.x = -0.09;
+    group.rotation.x = 0.24;
     const base = new THREE.Mesh(makeRounded(width, 0.12, depth, 0.055, 3), this.materials.darkSteel);
     group.add(base);
     if (label) {
       const top = new THREE.Mesh(
         new THREE.PlaneGeometry(width * 0.77, depth * 0.57),
-        new THREE.MeshPhysicalMaterial({ map: makeRectLabelTexture(label), roughness: 0.19, clearcoat: 0.82 }),
+        new THREE.MeshBasicMaterial({ map: makeRectLabelTexture(label), toneMapped: false }),
       );
       top.rotation.x = -Math.PI / 2;
       top.position.y = 0.066;
@@ -1299,7 +1303,7 @@ export class TypewriterModel {
     }
     this.machine.add(group);
 
-    const record = { code, group, base, baseY: y, baseRotationX: -0.09, depression: 0, phase: -1, action, lower: '', upper: '' };
+    const record = { code, group, base, baseY: y, baseRotationX: 0.24, depression: 0, phase: -1, action, lower: '', upper: '' };
     group.userData.keyRecord = record;
     base.userData.keyRecord = record;
     this.keys.set(code, record);
@@ -1989,6 +1993,7 @@ export class TypewriterModel {
       if (key.phase < 0 && !held && !locked && key.depression < 0.002) {
         key.depression = 0;
         key.group.position.y = key.baseY;
+        key.group.rotation.x = key.baseRotationX;
         this.activeKeys.delete(key);
       }
     }

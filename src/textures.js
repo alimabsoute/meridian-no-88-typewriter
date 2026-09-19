@@ -31,9 +31,10 @@ export function canvasTexture(canvas, { repeat = false } = {}) {
 
 export function makeKeyLabelTexture(primary, secondary = '') {
   const canvas = document.createElement('canvas');
-  canvas.width = 192;
-  canvas.height = 192;
+  canvas.width = 384;
+  canvas.height = 384;
   const context = canvas.getContext('2d');
+  context.scale(2, 2);
   const gradient = context.createRadialGradient(78, 58, 2, 96, 96, 98);
   gradient.addColorStop(0, '#fff9e7');
   gradient.addColorStop(0.55, '#e9dfc6');
@@ -45,14 +46,14 @@ export function makeKeyLabelTexture(primary, secondary = '') {
   context.beginPath();
   context.arc(96, 96, 88, 0, Math.PI * 2);
   context.stroke();
-  context.fillStyle = '#171816';
+  context.fillStyle = '#080808';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.font = secondary ? '54px "Bebas Neue", sans-serif' : '68px "Bebas Neue", sans-serif';
+  context.font = secondary ? 'bold 72px "Courier New", monospace' : 'bold 94px "Courier New", monospace';
   context.fillText(primary, 96, secondary ? 116 : 99);
   if (secondary) {
-    context.fillStyle = '#8e3428';
-    context.font = '31px "Bebas Neue", sans-serif';
+    context.fillStyle = '#791421';
+    context.font = 'bold 40px "Courier New", monospace';
     context.fillText(secondary, 96, 52);
   }
   for (let i = 0; i < 120; i += 1) {
@@ -66,9 +67,10 @@ export function makeKeyLabelTexture(primary, secondary = '') {
 
 export function makeRectLabelTexture(label) {
   const canvas = document.createElement('canvas');
-  canvas.width = 384;
-  canvas.height = 128;
+  canvas.width = 768;
+  canvas.height = 256;
   const context = canvas.getContext('2d');
+  context.scale(2, 2);
   const gradient = context.createLinearGradient(0, 0, 0, 128);
   gradient.addColorStop(0, '#252825');
   gradient.addColorStop(1, '#0a0c0b');
@@ -80,7 +82,7 @@ export function makeRectLabelTexture(label) {
   context.fillStyle = '#e5dbc2';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.font = `${label.length > 6 ? 36 : 46}px "Bebas Neue", sans-serif`;
+  context.font = `bold ${label.length > 6 ? 36 : 46}px "Courier New", monospace`;
   context.fillText(label, 192, 67);
   return canvasTexture(canvas);
 }
@@ -150,9 +152,9 @@ export function makeWoodTexture() {
   canvas.height = 1024;
   const context = canvas.getContext('2d');
   const base = context.createLinearGradient(0, 0, 0, canvas.height);
-  base.addColorStop(0, '#3c2113');
-  base.addColorStop(0.4, '#5a321c');
-  base.addColorStop(1, '#2b170f');
+  base.addColorStop(0, '#b69a72');
+  base.addColorStop(0.4, '#c8ad85');
+  base.addColorStop(1, '#a78a65');
   context.fillStyle = base;
   context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -241,10 +243,15 @@ export function makePaperFiberTexture() {
 }
 
 export class PaperRenderer {
-  constructor(documentState) {
+  constructor(documentState, { maxTextureSize = 4096, displayScale = 2 } = {}) {
     this.width = PAPER_EXPORT_BASE_WIDTH;
     this.height = PAPER_EXPORT_BASE_HEIGHT;
-    this.displayScale = 0.6;
+    // Rasterize live glyphs at 52px instead of shrinking them to 15.6px.
+    // Keep exports at their established dimensions and upload only the changed
+    // impression rectangle while typing, not this larger entire sheet.
+    const textureLimit = Number.isFinite(maxTextureSize) && maxTextureSize > 0 ? maxTextureSize : 4096;
+    const requestedScale = Number.isFinite(displayScale) && displayScale > 0 ? Math.min(2, displayScale) : 2;
+    this.displayScale = Math.min(requestedScale, textureLimit / Math.max(this.width, this.height));
     this.displayWidth = Math.round(this.width * this.displayScale);
     this.displayHeight = Math.round(this.height * this.displayScale);
     this.canvas = document.createElement('canvas');
@@ -255,6 +262,12 @@ export class PaperRenderer {
     this.displayCanvas.width = this.displayWidth;
     this.displayCanvas.height = this.displayHeight;
     this.displayContext = this.displayCanvas.getContext('2d');
+    // Keep geometric ink coverage separate from the warm stock RGB. The GPU
+    // carries it in the otherwise-unused alpha channel of the opaque sheet.
+    this.inkCanvas = document.createElement('canvas');
+    this.inkCanvas.width = this.displayWidth;
+    this.inkCanvas.height = this.displayHeight;
+    this.inkContext = this.inkCanvas.getContext('2d');
     this.document = documentState;
     this.textureReady = false;
     this.uploadStats = {
@@ -268,14 +281,17 @@ export class PaperRenderer {
     this.syncDisplayPaper();
     for (const mark of documentState.marks) this.drawImpression(mark, false);
     this.texture = this.makeDisplayTexture();
-    this.texture.generateMipmaps = false;
-    this.texture.minFilter = THREE.LinearFilter;
+    this.texture.generateMipmaps = true;
+    this.texture.minFilter = THREE.LinearMipmapLinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
+    this.texture.anisotropy = 8;
   }
 
   makeDisplayTexture() {
     const image = this.displayContext.getImageData(0, 0, this.displayWidth, this.displayHeight);
-    this.textureData = new Uint8Array(image.data);
+    this.packInkCoverage(image.data, 0, 0, this.displayWidth, this.displayHeight);
+    // Reuse the detached pixel buffer instead of copying another full sheet.
+    this.textureData = new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
     const texture = new THREE.DataTexture(
       this.textureData,
       this.displayWidth,
@@ -284,6 +300,7 @@ export class PaperRenderer {
       THREE.UnsignedByteType,
     );
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.userData.inkCoverage = true;
     texture.flipY = false;
     texture.repeat.y = -1;
     texture.offset.y = 1;
@@ -373,6 +390,12 @@ export class PaperRenderer {
   syncDisplayPaper() {
     this.displayContext.clearRect(0, 0, this.displayWidth, this.displayHeight);
     this.displayContext.drawImage(this.canvas, 0, 0, this.displayWidth, this.displayHeight);
+    this.inkContext.clearRect(0, 0, this.displayWidth, this.displayHeight);
+  }
+
+  packInkCoverage(pixels, x, y, width, height) {
+    const mask = this.inkContext.getImageData(x, y, width, height).data;
+    for (let i = 3; i < pixels.length; i += 4) pixels[i] = mask[i];
   }
 
   impressionCoordinates(mark, scale = 1) {
@@ -400,7 +423,7 @@ export class PaperRenderer {
     };
   }
 
-  drawImpressionToContext(mark, context, scale = 1) {
+  drawImpressionToContext(mark, context, scale = 1, coverageOnly = false) {
     const { x, y } = this.impressionCoordinates(mark, scale);
     const random = seededRandom(mark.seed);
     const force = Math.max(0.25, Math.min(1, mark.force ?? 0.72));
@@ -420,24 +443,35 @@ export class PaperRenderer {
       context.fillStyle = `rgba(255, 250, 230, ${0.11 + force * 0.06})`;
       context.fillText(mark.character, -0.65 * scale, -0.65 * scale);
     } else {
-      const color = mark.ink === 'red' ? [118, 28, 21] : [20, 22, 19];
-      const opacity = 0.62 + force * 0.34;
+      // A ribbon impression is opaque pigment. Low alpha mixed the warm stock
+      // into black and made the red ribbon read as faded brown. The typeface
+      // already supplies broken ribbon edges; retain pressure/jitter without
+      // blurring the silhouette with large, offset duplicate impressions.
+      const color = mark.ink === 'red' ? [170, 8, 18] : [8, 8, 8];
+      const opacity = 0.94 + force * 0.05;
       context.fillStyle = `rgba(${color.join(',')}, ${opacity})`;
+      // Subpixel-sized distressed strokes used to vanish at the Front camera.
+      // A restrained ribbon spread keeps their silhouette connected when filtered.
+      context.strokeStyle = context.fillStyle;
+      context.lineWidth = 0.5 * scale;
+      context.lineJoin = 'round';
+      context.strokeText(mark.character, 0, 0);
       context.fillText(mark.character, 0, 0);
       context.globalCompositeOperation = 'multiply';
       for (let pass = 0; pass < 2; pass += 1) {
-        context.fillStyle = `rgba(${color.join(',')}, ${0.08 + random() * 0.09})`;
-        context.fillText(mark.character, (random() - 0.5) * 1.25 * scale, (random() - 0.5) * 0.85 * scale);
+        context.fillStyle = `rgba(${color.join(',')}, ${0.04 + random() * 0.04})`;
+        context.fillText(mark.character, (random() - 0.5) * 0.3 * scale, (random() - 0.5) * 0.2 * scale);
       }
       context.globalCompositeOperation = 'source-over';
       context.fillStyle = '#e9dec5';
-      for (let speck = 0; speck < 5; speck += 1) {
-        context.globalAlpha = 0.08 + random() * 0.13;
+      if (coverageOnly) context.globalCompositeOperation = 'destination-out';
+      for (let speck = 0; speck < 3; speck += 1) {
+        context.globalAlpha = 0.025 + random() * 0.045;
         context.fillRect(
           (random() - 0.5) * 10 * scale,
           (-8 + random() * 16) * scale,
-          (0.5 + random()) * scale,
-          (0.5 + random()) * scale,
+          (0.25 + random() * 0.5) * scale,
+          (0.25 + random() * 0.5) * scale,
         );
       }
     }
@@ -493,6 +527,7 @@ export class PaperRenderer {
     }
 
     const pixels = this.displayContext.getImageData(region.x, region.y, region.width, region.height).data;
+    this.packInkCoverage(pixels, region.x, region.y, region.width, region.height);
     const rowComponents = region.width * 4;
     for (let row = 0; row < region.height; row += 1) {
       const sourceStart = row * rowComponents;
@@ -509,6 +544,7 @@ export class PaperRenderer {
   syncTextureFromDisplay() {
     if (!this.texture) return;
     const pixels = this.displayContext.getImageData(0, 0, this.displayWidth, this.displayHeight).data;
+    this.packInkCoverage(pixels, 0, 0, this.displayWidth, this.displayHeight);
     this.textureData.set(pixels);
     this.texture.clearUpdateRanges();
     this.texture.needsUpdate = true;
@@ -520,6 +556,7 @@ export class PaperRenderer {
   drawImpression(mark, update = true) {
     this.drawImpressionToContext(mark, this.context, 1);
     const displayRegion = this.drawImpressionToContext(mark, this.displayContext, this.displayScale);
+    if (mark.ink !== 'stencil') this.drawImpressionToContext(mark, this.inkContext, this.displayScale, true);
     if (update) this.updateDisplayTexture(displayRegion);
   }
 
