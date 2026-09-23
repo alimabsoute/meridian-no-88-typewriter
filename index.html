@@ -9,6 +9,22 @@
     <title>Octoberline 211 — A free typewriter for your next page</title>
     <!-- LANDING_STYLE -->
     <!-- UPDATES_SIGNUP_STYLE -->
+    <!-- Google Analytics 4 — set VITE_GA_MEASUREMENT_ID in host env / .env (build-time) -->
+  <script>
+    (function () {
+      var id = "%VITE_GA_MEASUREMENT_ID%";
+      if (!id || id.indexOf("%") !== -1 || id.slice(0, 2) !== "G-") return;
+      var s = document.createElement("script");
+      s.async = true;
+      s.src = "https://www.googletagmanager.com/gtag/js?id=" + id;
+      document.head.appendChild(s);
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      window.gtag = gtag;
+      gtag("js", new Date());
+      gtag("config", id);
+    })();
+  </script>
   </head>
   <body class="updates-app">
     <!-- UPDATES_SIGNUP -->
