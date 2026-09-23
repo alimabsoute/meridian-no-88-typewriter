@@ -7,8 +7,29 @@
   const contexts = {};
   const landing = window.__OCTOBERLINE_LANDING__ = {
     entry, contexts, started: false, status: 'idle',
-    progress(message) { get('intro-load-status').textContent = message; },
-    finish() { this.status = 'ready'; get('enter-studio').removeAttribute('aria-busy'); },
+    showLoading(state, message) {
+      const indicator = get('intro-loading'), bar = get('intro-loading-bar');
+      if (indicator) indicator.dataset.state = state;
+      if (get('intro-load-status')) get('intro-load-status').textContent = message;
+      if (bar) {
+        bar.setAttribute('aria-label', message);
+        if (state === 'ready') bar.setAttribute('aria-valuenow', '100');
+        else bar.removeAttribute('aria-valuenow');
+        bar.hidden = state === 'error';
+      }
+    },
+    progress(message) { this.showLoading('loading', message); },
+    previewReady() {
+      if (!this.started && this.status !== 'error') this.showLoading('ready', 'Preview ready. Your writing room is one click away.');
+    },
+    previewUnavailable() {
+      if (!this.started && this.status !== 'error') this.showLoading('error', 'Preview unavailable. You can still open the writing room.');
+    },
+    finish() {
+      this.status = 'ready';
+      this.showLoading('ready', 'Your writing room is ready.');
+      get('enter-studio').removeAttribute('aria-busy');
+    },
     fail(message) {
       const intro = get('intro-overlay'), button = get('enter-studio'), status = get('intro-load-status');
       this.status = 'error';
@@ -17,7 +38,7 @@
       get('intro-guide').disabled = false;
       button.removeAttribute('aria-busy');
       button.querySelector('.enter-label').textContent = 'Try opening the typewriter again';
-      status.textContent = message || 'The room could not open. Please try again.';
+      this.showLoading('error', message || 'The room could not open. Please try again.');
       status.setAttribute('role', 'alert');
       for (const context of Object.values(contexts)) context?.close().catch(() => {});
     },
@@ -56,7 +77,10 @@
     // A failed decorative image is harmless. A failed simulator script must
     // still produce a usable retry even when it failed before the first click.
     if (event.type === 'error' && !(event instanceof ErrorEvent) && !(event.target instanceof HTMLScriptElement)) return;
-    if (landing.status === 'idle') landing.bootError = true;
+    if (landing.status === 'idle') {
+      landing.bootError = true;
+      landing.fail('The typewriter could not finish loading. Please try again.');
+    }
     if (landing.status === 'loading') landing.fail();
   }
   window.addEventListener('error', startupFailed, true);

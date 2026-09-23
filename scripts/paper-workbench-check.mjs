@@ -16,6 +16,7 @@ try {
  await page.click('[data-workbench=paper]');
  await page.click('#release-sheet'); await settle();
  await page.click('#keep-sheet'); await settle();
+ await page.click('[data-workbench=paper]');
  await page.click('#restore-manuscript'); await settle();
  await page.click('#reinsert-sheet'); await settle();
  console.log('After reinsert', await state());
@@ -24,6 +25,7 @@ try {
  console.log('After reopen', await state());
  await page.click('#release-sheet'); await settle();
  await page.click('#keep-sheet'); await settle();
+ await page.selectOption('#paper-stock','laid');
  await page.click('#load-sheet'); await settle();
  console.log('After fresh paper', await state());
  await page.keyboard.type('Still writing',{delay:35});

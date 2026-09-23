@@ -40,9 +40,13 @@
                 <span class="enter-label">Start typing on the typewriter now</span><i aria-hidden="true">→</i>
               </button>
               <p class="intro-free" id="intro-free">No sign-in. No credit cards. <strong>Completely free.</strong></p>
+              <div id="intro-loading" data-state="loading">
+              <p id="intro-load-status" role="status" aria-live="polite" aria-atomic="true">Preparing the typewriter…</p>
+              <div id="intro-loading-bar" role="progressbar" aria-label="Preparing the typewriter" aria-describedby="intro-load-status"><span></span></div>
+              <small id="intro-loading-hint">First visit? The room may take a few moments to warm up.</small>
+              </div>
               <button class="intro-guide-button" id="intro-guide" type="button">See how it works <span aria-hidden="true">↗</span></button>
             </div>
-            <p id="intro-load-status" role="status" aria-live="polite" aria-atomic="true"></p>
           </div>
           <div class="landing-stage">
             <div id="landing-assembly" aria-hidden="true"></div>
@@ -134,7 +138,10 @@
           <span>VIEW</span>
           <select id="mobile-view-select" aria-label="Camera view">
             <option value="writer">Writer</option>
-            <option value="front">Front</option>
+            <option value="front">Front close-up</option>
+            <option value="room">Whole room</option>
+            <option value="television">Television</option>
+            <option value="library">Books &amp; art</option>
             <option value="mechanism">Action</option>
             <option value="ribbon">Ribbon</option>
             <option value="carriage">Carriage</option>
@@ -142,10 +149,14 @@
         </label>
         <button class="mobile-mechanics-toggle" id="mobile-mechanics-toggle" type="button" aria-expanded="false">MECHANICS</button>
         <button data-view="writer" class="view-button active" aria-label="Writer view" aria-pressed="true"><span>01</span><b>WRITER</b></button>
-        <button data-view="front" class="view-button" aria-label="Wide front view" aria-pressed="false"><span>02</span><b>FRONT</b></button>
-        <button data-view="mechanism" class="view-button" aria-label="Mechanism view" aria-pressed="false"><span>03</span><b>ACTION</b></button>
-        <button data-view="ribbon" class="view-button" aria-label="Ribbon view" aria-pressed="false"><span>04</span><b>RIBBON</b></button>
-        <button data-view="carriage" class="view-button" aria-label="Carriage view" aria-pressed="false"><span>05</span><b>CARRIAGE</b></button>
+        <button data-view="front" class="view-button" aria-label="Front typewriter view" aria-pressed="false"><span>02</span><b>FRONT</b></button>
+        <button data-view="room" class="view-button" aria-label="Whole room view" aria-pressed="false"><span>03</span><b>ROOM</b></button>
+        <button data-view="television" class="view-button" aria-label="Television close-up" aria-pressed="false"><span>04</span><b>TV</b></button>
+        <button data-view="library" class="view-button" aria-label="Books and art close-up" aria-pressed="false"><span>05</span><b>BOOKS &amp; ART</b></button>
+        <button data-view="mechanism" class="view-button" aria-label="Mechanism view" aria-pressed="false"><span>06</span><b>ACTION</b></button>
+        <button data-view="ribbon" class="view-button" aria-label="Ribbon view" aria-pressed="false"><span>07</span><b>RIBBON</b></button>
+        <button data-view="carriage" class="view-button" aria-label="Carriage view" aria-pressed="false"><span>08</span><b>CARRIAGE</b></button>
+        <p class="view-zoom-hint">Scroll or pinch to zoom. In TV and Books &amp; Art, right-drag or use two fingers to look around.</p>
       </nav>
 
       <section class="ink-selector ui-layer" aria-label="Ribbon color selector">
@@ -217,7 +228,7 @@
           <div class="tray-actions">
             <button id="download-text">SAVE .TXT</button>
             <button id="download-paper">SAVE PAGE IMAGE</button>
-            <button id="release-sheet" class="paper-primary">RELEASE SHEET</button>
+            <button id="release-sheet" class="paper-primary">Remove sheet</button>
           </div>
           <div class="paper-fate" id="paper-fate">
             <div class="paper-fate-status">
@@ -225,14 +236,24 @@
               <small><b id="manuscript-count">0</b> KEPT · <b id="discard-count">0</b> DISCARDED</small>
             </div>
             <div class="fate-actions">
-              <button id="keep-sheet" hidden>FILE IN MANUSCRIPT</button>
-              <button id="crumple-sheet" class="hold-action" hidden><span>HOLD TO CRUMPLE</span><i aria-hidden="true"></i></button>
-              <button id="reinsert-sheet" hidden>REINSERT SHEET</button>
-              <button id="load-sheet" class="paper-primary" hidden>LOAD FRESH PAPER</button>
+              <button id="keep-sheet" hidden>Keep page</button>
+              <button id="reinsert-sheet" hidden>Reinsert</button>
+              <button id="crumple-sheet" class="hold-action" hidden aria-label="Discard — hold to crumple"><span>Discard <small>hold to crumple</small></span><i aria-hidden="true"></i></button>
+              <button id="load-sheet" class="paper-primary" hidden>Load fresh paper</button>
               <button id="recover-sheet" hidden>RECOVER LAST DISCARD</button>
               <button id="restore-manuscript" hidden>RESTORE LAST KEPT PAGE</button>
               <button id="empty-wastebasket" class="danger-subtle" hidden>EMPTY WASTEBASKET</button>
             </div>
+            <label class="paper-stock-field" for="paper-stock">
+              <span>Paper finish</span>
+              <select id="paper-stock" aria-describedby="paper-stock-hint">
+                <option value="bond">Classic white bond</option>
+                <option value="cotton">Ivory cotton</option>
+                <option value="onionskin">Onionskin</option>
+                <option value="laid">Laid writing paper</option>
+              </select>
+              <small id="paper-stock-hint">Your choice is remembered for fresh sheets.</small>
+            </label>
           </div>
           <section class="paper-desk" aria-labelledby="paper-desk-title">
             <div class="paper-desk-heading">
@@ -314,10 +335,10 @@
             </div>
           </li>
           <li data-coach-action="release">
-            <p class="coach-instruction"><strong>Finished a page? Open Paper below.</strong> Choose Release sheet, then file it, crumple it, or put it back in the machine.</p>
+            <p class="coach-instruction"><strong>Finished a page? Open Paper below.</strong> Choose Remove sheet, then keep it, discard it, or put it back in the machine.</p>
             <div class="coach-demo coach-demo-release" aria-hidden="true">
               <div class="coach-release-scene"><div class="coach-release-paper"><i></i><i></i><i></i></div><div class="coach-release-platen"></div><span>↑</span></div>
-              <div class="coach-release-flow"><span class="coach-demo-control">Paper</span><b>→</b><span class="coach-demo-control coach-demo-control-active">Release sheet ↑</span></div>
+              <div class="coach-release-flow"><span class="coach-demo-control">Paper</span><b>→</b><span class="coach-demo-control coach-demo-control-active">Remove sheet ↑</span></div>
               <div class="coach-demo-caption">YOUR PAGE, READY TO KEEP.</div>
             </div>
           </li>
@@ -330,11 +351,14 @@
 
       <nav class="workbench-toolbar ui-layer" aria-label="Writing workbench">
         <button type="button" data-workbench="paper" aria-expanded="false">Paper</button>
-        <button type="button" data-workbench="machine" aria-expanded="false">Machine</button>
-        <button type="button" data-workbench="room" aria-expanded="false">Room</button>
         <button type="button" data-workbench="view" aria-expanded="false">View</button>
-        <button type="button" data-workbench="ink" aria-expanded="false">Ink</button>
-        <button type="button" data-workbench="export" aria-expanded="false">Export</button>
+        <button type="button" data-workbench="room" aria-expanded="false">Room</button>
+        <button type="button" class="workbench-more" id="workbench-more" aria-expanded="false" aria-controls="workbench-more-menu" title="Ink, machine settings and export">More <span aria-hidden="true">···</span></button>
+        <div class="workbench-more-menu" id="workbench-more-menu" role="group" aria-label="More writing tools" hidden>
+          <button type="button" data-workbench="ink" aria-expanded="false">Ink <small>Choose your ribbon</small></button>
+          <button type="button" data-workbench="machine" aria-expanded="false">Machine <small>Typing feel and settings</small></button>
+          <button type="button" data-workbench="export" aria-expanded="false">Export <small>Save or print your pages</small></button>
+        </div>
       </nav>
       <footer class="key-legend ui-layer">
         <div><kbd>TYPE</kbd><span>STRIKE KEYS</span></div>
@@ -345,7 +369,8 @@
       </footer>
 
       <div class="margin-warning ui-layer" id="margin-warning" role="status" aria-live="polite">
-        <span>●</span> RIGHT MARGIN — RETURN CARRIAGE
+        <span class="margin-return-arrow" aria-hidden="true">←</span>
+        <div><strong>Press <kbd>↵ Enter</kbd> to return the carriage</strong><small>Then keep writing.</small></div>
       </div>
 
       <div class="toast ui-layer" id="toast" role="status" aria-live="polite"></div>

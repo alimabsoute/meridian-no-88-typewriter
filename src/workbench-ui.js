@@ -9,6 +9,19 @@ export function initWorkbench({ onOpen = () => {}, onClose = () => {} } = {}) {
   const view = document.querySelector('.view-dial');
   const ink = document.querySelector('.ink-selector');
   const buttons = [...toolbar.querySelectorAll('[data-workbench]')];
+  const more = document.querySelector('#workbench-more');
+  const moreMenu = document.querySelector('#workbench-more-menu');
+  function setMore(open, focus = false) {
+    if (!moreMenu || !more) return;
+    moreMenu.hidden = !open;
+    more.setAttribute('aria-expanded', String(open));
+    if (focus) (open ? moreMenu.querySelector('button') : more).focus({ preventScroll: true });
+  }
+  more?.addEventListener('click', () => {
+    const open = moreMenu.hidden;
+    if (current) setPanel('', { focus: false });
+    setMore(open, true);
+  });
   const panels = { paper, export: paper, machine, room, view, ink };
   document.querySelector('#document-toggle').tabIndex = -1;
   room.querySelector('summary').tabIndex = -1;
@@ -45,6 +58,7 @@ export function initWorkbench({ onOpen = () => {}, onClose = () => {} } = {}) {
     changing = true;
     const previous = current;
     current = name;
+    setMore(false);
     if (!native) {
       // Route through the original actions to preserve desk refresh and input release.
       if (paper.classList.contains('open') && !['paper', 'export'].includes(name)) document.querySelector('#document-toggle').click();
@@ -61,7 +75,10 @@ export function initWorkbench({ onOpen = () => {}, onClose = () => {} } = {}) {
       if (focus) panels[name].querySelector('.workbench-close').focus({ preventScroll: true });
     } else {
       onClose(previous);
-      if (focus) buttons.find((button) => button.dataset.workbench === previous)?.focus({ preventScroll: true });
+      if (focus) {
+        const previousButton = buttons.find((button) => button.dataset.workbench === previous);
+        (moreMenu?.contains(previousButton) ? more : previousButton)?.focus({ preventScroll: true });
+      }
     }
   }
   buttons.forEach((button) => button.addEventListener('click', () => setPanel(current === button.dataset.workbench ? '' : button.dataset.workbench)));
@@ -71,9 +88,14 @@ export function initWorkbench({ onOpen = () => {}, onClose = () => {} } = {}) {
   // The original outside-dismiss handler must not close a panel before its toggle fires.
   toolbar.addEventListener('pointerdown', (event) => event.stopPropagation());
   document.addEventListener('pointerdown', (event) => {
+    if (!toolbar.contains(event.target)) setMore(false);
     if (current && !panels[current].contains(event.target) && !toolbar.contains(event.target)) setPanel('', { focus: false });
   });
   document.addEventListener('keydown', (event) => {
+    if (document.querySelector('dialog[open]')) return;
+    if (event.key === 'Escape' && moreMenu && !moreMenu.hidden) {
+      event.preventDefault(); event.stopPropagation(); setMore(false, true); return;
+    }
     if (event.key !== 'Escape' || !current || document.querySelector('#field-guide').open) return;
     event.preventDefault();
     event.stopPropagation();

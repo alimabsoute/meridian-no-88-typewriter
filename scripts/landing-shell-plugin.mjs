@@ -28,15 +28,7 @@ export function landingShellPlugin() {
           }).join('');
           return `<p class="prelude-stanza" style="--stanza-delay:${stanza * 9}s">${typedLines}</p>`;
         }).join('');
-        // Small CSS surfaces share the paper's texture. They are inert
-        // until the actual renderer submits its first frame; no copied model,
-        // bitmap, particle engine or per-frame JavaScript is needed.
-        const fragments = Array.from({ length: 48 }, (_, index) => {
-          const column = index % 6, row = Math.floor(index / 6);
-          return `<i style="--tile-x:${column * 100 / 6}%;--tile-y:${row * 12.5}%;--grain-x:${column * 20}%;--grain-y:${row * 100 / 7}%;--flight-x:${(column - 2.5) * 24 + (row % 2 ? 14 : -14)}px;--flight-y:${-130 + row * 9 - index % 3 * 12}px;--flight-turn:${(index % 7 - 3) * 11}deg;--release-delay:${(7 - row) * 14 + column % 3 * 14}ms"></i>`;
-        }).join('');
-        const smoke = Array.from({ length: 6 }, (_, index) => `<span class="prelude-smoke" style="--smoke-x:${12 + index * 14}%;--smoke-drift:${(index - 2.5) * 22}px;--smoke-delay:${index % 3 * 50}ms"></span>`).join('');
-        const prelude = `<div class="landing-prelude" aria-hidden="true"><span class="prelude-paper-shadow"></span><div class="prelude-paper-frame"><div class="prelude-paper"><span class="prelude-paper-imprint">OCTOBERLINE · NO. 211</span><div class="prelude-ink">${ink}</div><span class="prelude-paper-folio">YOUR WORDS BELONG HERE</span><span class="prelude-paper-curl"></span><span class="prelude-paper-fragments">${fragments}${smoke}</span></div></div><span class="landing-prelude-light"></span></div>`;
+        const prelude = `<div class="landing-prelude" aria-hidden="true"><span class="prelude-paper-shadow"></span><div class="prelude-paper-frame"><div class="prelude-paper"><span class="prelude-paper-imprint">OCTOBERLINE · NO. 211</span><div class="prelude-ink">${ink}</div><span class="prelude-paper-folio">YOUR WORDS BELONG HERE</span><span class="prelude-paper-curl"></span></div></div><span class="landing-prelude-light"></span></div>`;
         return html.replace('<!-- LANDING_STYLE -->', () => `<style id="landing-critical">${css}</style>`)
           .replace('<!-- LANDING_BOOTSTRAP -->', () => `<script>${controller}</script>`)
           .replace('<div id="landing-assembly" aria-hidden="true"></div>', () => `<div id="landing-assembly" aria-hidden="true">${prelude}</div>`)

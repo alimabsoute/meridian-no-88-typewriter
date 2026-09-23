@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawPaperStock, normalizePaperStock } from './paper-stock.js';
 import {
   PAPER_EXPORT_BASE_HEIGHT,
   PAPER_EXPORT_BASE_WIDTH,
@@ -243,7 +244,8 @@ export function makePaperFiberTexture() {
 }
 
 export class PaperRenderer {
-  constructor(documentState, { maxTextureSize = 4096, displayScale = 2 } = {}) {
+  constructor(documentState, { maxTextureSize = 4096, displayScale = 2, paperStock = 'bond' } = {}) {
+    this.paperStock = normalizePaperStock(paperStock);
     this.width = PAPER_EXPORT_BASE_WIDTH;
     this.height = PAPER_EXPORT_BASE_HEIGHT;
     // Rasterize live glyphs at 52px instead of shrinking them to 15.6px.
@@ -311,37 +313,27 @@ export class PaperRenderer {
     return texture;
   }
 
+  setPaperStock(id) {
+    const next = normalizePaperStock(id);
+    if (this.paperStock === next) return false;
+    this.paperStock = next;
+    this.redraw(this.document);
+    return true;
+  }
+
   drawPaper() {
-    const context = this.context;
-    const gradient = context.createLinearGradient(0, 0, this.width, this.height);
-    gradient.addColorStop(0, '#eee5cf');
-    gradient.addColorStop(0.48, '#e9dec5');
-    gradient.addColorStop(1, '#dcd0b7');
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, this.width, this.height);
-
-    const random = seededRandom(24681357 + this.document.sheetNumber);
-    for (let i = 0; i < 7200; i += 1) {
-      const alpha = 0.018 + random() * 0.026;
-      context.strokeStyle = random() > 0.48 ? `rgba(115,92,58,${alpha})` : `rgba(255,255,242,${alpha})`;
-      context.lineWidth = random() * 0.8 + 0.2;
-      const x = random() * this.width;
-      const y = random() * this.height;
-      context.beginPath();
-      context.moveTo(x, y);
-      context.lineTo(x + 3 + random() * 15, y + (random() - 0.5) * 2);
-      context.stroke();
-    }
-
-    context.fillStyle = 'rgba(120, 95, 55, .055)';
-    context.fillRect(0, 0, 4, this.height);
-    context.fillRect(this.width - 4, 0, 4, this.height);
-    context.fillRect(0, 0, this.width, 3);
+    drawPaperStock(this.context, this.width, this.height, this.paperStock,
+      seededRandom(24681357 + this.document.sheetNumber));
   }
 
   drawExportPaperToContext(context, scale, appearance) {
     const width = PAPER_EXPORT_BASE_WIDTH * scale;
     const height = PAPER_EXPORT_BASE_HEIGHT * scale;
+    if (appearance !== 'carbon-copy') {
+      drawPaperStock(context, width, height, this.paperStock,
+        seededRandom(24681357 + this.document.sheetNumber), scale);
+      return;
+    }
     const gradient = context.createLinearGradient(0, 0, width, height);
     if (appearance === 'carbon-copy') {
       gradient.addColorStop(0, '#e9e8de');

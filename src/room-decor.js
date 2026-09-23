@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { PHILADELPHIA_NEWS_CLIPS } from './philadelphia-news.js';
 import { TelevisionVideoTexture } from './television-video-texture.js';
+import { buildRoomCollectibles, ROOM_COLLECTIBLE_MEDIA } from './room-collectibles.js';
+export { ROOM_DECOR_FOCUS } from './room-collectibles.js';
 
 export const ROOM_DECOR_MEDIA = Object.freeze({
   film: './media/philly-tv.mp4',
   poster: './media/philly-tv-standby.svg',
-  art: './media/philly-wall-art.png',
+  art: ROOM_COLLECTIBLE_MEDIA.painting,
 });
 
 function roundedRectangle(width, height, radius) {
@@ -22,27 +24,6 @@ function roundedRectangle(width, height, radius) {
   shape.lineTo(x, y + radius);
   shape.quadraticCurveTo(x, y, x + radius, y);
   return shape;
-}
-
-function frameRing(outer, opening) {
-  const shape = roundedRectangle(outer, outer, 0.024);
-  const hole = new THREE.Path();
-  const half = opening / 2;
-  hole.moveTo(-half, -half);
-  hole.lineTo(-half, half);
-  hole.lineTo(half, half);
-  hole.lineTo(half, -half);
-  hole.closePath();
-  shape.holes.push(hole);
-  return new THREE.ExtrudeGeometry(shape, {
-    depth: 0.074,
-    bevelEnabled: true,
-    bevelSize: 0.012,
-    bevelThickness: 0.017,
-    bevelSegments: 3,
-    curveSegments: 8,
-    steps: 1,
-  });
 }
 
 /**
@@ -98,8 +79,7 @@ export class PhiladelphiaRoomDecor {
     this.root.name = 'PhiladelphiaRoomDecor';
     parent.add(this.root);
     this._buildTelevision();
-    this._buildArt();
-    this._loadArt();
+    this.collection = buildRoomCollectibles(this);
     this._loadPoster();
     this._createVideo();
     this.onVisibilityChange = () => this._syncPlayback();
@@ -132,7 +112,8 @@ export class PhiladelphiaRoomDecor {
   _buildTelevision() {
     const group = new THREE.Group();
     group.name = 'PhiladelphiaWallTelevision';
-    group.position.set(-8.8, 5.22, -5.96);
+    group.position.set(-10.4, 5.05, -5.96);
+    group.scale.set(1.50, 1.50, 1.45);
     this.root.add(group);
 
     const mount = this._material(new THREE.MeshStandardMaterial({ color: 0x191a18, roughness: 0.86 }));
@@ -182,51 +163,6 @@ export class PhiladelphiaRoomDecor {
     this._mesh(new THREE.SphereGeometry(0.012, 8, 6), this.ledMaterial, group, 'TelevisionStandbyLight', 2.38, -1.51, 0.511);
     this.television = group;
     this._syncScreen();
-  }
-
-  _buildArt() {
-    const wood = this._material(new THREE.MeshStandardMaterial({ color: 0x3f2b1b, roughness: 0.5, metalness: 0.06 }));
-    const brass = this._material(new THREE.MeshStandardMaterial({ color: 0x9c7b49, roughness: 0.42, metalness: 0.65 }));
-    const mat = this._material(new THREE.MeshStandardMaterial({ color: 0xd3c7ac, roughness: 1 }));
-    const backing = this._material(new THREE.MeshStandardMaterial({ color: 0x2c2219, roughness: 1 }));
-    this.artMaterials = [];
-    for (const [index, title] of ['Rocky — Philadelphia Museum of Art', 'Boathouse Row — Blue Hour'].entries()) {
-      const frame = new THREE.Group();
-      frame.name = index === 0 ? 'RockyStatuePainting' : 'BoathouseRowPainting';
-      frame.userData.title = title;
-      frame.position.set(11.48 + index * 2.17, 5.12, -5.95);
-      this.root.add(frame);
-      this._mesh(new THREE.BoxGeometry(1.91, 1.91, 0.045), backing, frame, `${frame.name}Backing`, 0, 0, 0.025);
-      this._mesh(frameRing(2.01, 1.83), wood, frame, `${frame.name}WalnutFrame`, 0, 0, 0.046);
-      this._mesh(new THREE.PlaneGeometry(1.86, 1.86), mat, frame, `${frame.name}LinenMat`, 0, 0, 0.086);
-      this._mesh(frameRing(1.665, 1.62), brass, frame, `${frame.name}BrassSlip`, 0, 0, 0.051);
-      const painted = this._material(new THREE.MeshStandardMaterial({ color: 0xd4c8b0, roughness: 1, emissive: 0x1a1611, emissiveIntensity: 0.12 }));
-      this.artMaterials.push(painted);
-      this._mesh(new THREE.PlaneGeometry(1.623, 1.623), painted, frame, `${frame.name}Canvas`, 0, 0, 0.115);
-    }
-  }
-
-  _loadArt() {
-    if (!this.loader || this.localFileMode) return;
-    this.loader.load(ROOM_DECOR_MEDIA.art, (texture) => {
-      if (this.disposed) { texture.dispose(); return; }
-      this._texture(texture);
-      for (const [index, material] of this.artMaterials.entries()) {
-        const panel = this._texture(texture.clone());
-        // One atlas, two original paintings. Leave its center seam outside both
-        // canvases and retain the generated art's square aspect ratio.
-        panel.repeat.set(0.498, 0.996);
-        panel.offset.set(index * 0.5 + 0.001, 0.002);
-        panel.needsUpdate = true;
-        material.map = panel;
-        material.color.set(0xffffff);
-        material.needsUpdate = true;
-      }
-      this.artLoaded = true;
-    }, undefined, () => {
-      // If an optional media asset is unavailable, leave the linen and real
-      // frames intact instead of a broken texture.
-    });
   }
 
   _loadPoster() {

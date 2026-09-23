@@ -3,6 +3,7 @@ import '@fontsource/special-elite/400.css';
 import './styles.css';
 import * as THREE from 'three';
 import { fitRoomOverview } from './room-overview.js';
+import { CAMERA_PRESETS, configureRoomNavigation, fitRoomDetail } from './room-camera.js';
 import { createTelevisionSurface } from './television-surface.js';
 import { createTelevisionControls } from './television-controls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -10,6 +11,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { initWorkbench } from './workbench-ui.js';
 import { TypewriterDocument } from './typewriter-document.js';
 import { PaperRenderer } from './textures.js';
+import { normalizePaperStock } from './paper-stock.js';
+import { initPaperContextActions } from './paper-context-actions.js';
+import { initPaperStockPicker } from './paper-stock-picker.js';
+import './paper-stock-picker.css';
 import { TypewriterAudio } from './audio-engine.js';
 import { CODE_BY_CHARACTER, KEY_BY_CODE, TOUCH_PRESETS, TypewriterModel } from './typewriter-model.js';
 import {
@@ -57,6 +62,10 @@ function getStoredState() {
 }
 
 const stored = getStoredState();
+const PAPER_STOCK_KEY = `${BRAND.storageNamespace}.paper-stock.v1`;
+let preferredPaperStock = 'bond';
+try { preferredPaperStock = normalizePaperStock(localStorage.getItem(PAPER_STOCK_KEY)); } catch { /* preference is optional */ }
+let paperActions = null;
 const initialInkMode = stored?.inkMode && ['black', 'red', 'stencil'].includes(stored.inkMode)
   ? stored.inkMode
   : 'black';
@@ -138,6 +147,7 @@ function documentFromPaperRecord(record, fallbackSheetNumber = 1) {
 
 const initialPaperRecord = lifecycleState.insertedSheet ?? lifecycleState.looseSheet?.page ?? null;
 let page = documentFromPaperRecord(initialPaperRecord, lifecycleState.nextSheetNumber);
+let activePaperStock = normalizePaperStock(initialPaperRecord?.metadata?.paperStock ?? (initialPaperRecord ? 'bond' : preferredPaperStock));
 
 await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 1200))]);
 
@@ -193,7 +203,8 @@ controls.maxAzimuthAngle = 1.02;
 controls.maxTargetRadius = 4.5;
 controls.enablePan = false;
 controls.screenSpacePanning = false;
-controls.enabled = false;
+controls.enabled = true;
+controls.enableRotate = false;
 controls.update();
 
 const hemisphere = new THREE.HemisphereLight(0x8fa9b4, 0x2f1c13, 1.18);
@@ -260,7 +271,7 @@ const atmosphereAudio = new AtmosphereAudio({
   seed: 88,
 });
 const paperTextureOptions = { maxTextureSize: renderer.capabilities.maxTextureSize };
-let paperRenderer = new PaperRenderer(page, paperTextureOptions);
+let paperRenderer = new PaperRenderer(page, { ...paperTextureOptions, paperStock: activePaperStock });
 document.fonts.ready.then(() => paperRenderer.redraw(page));
 
 const refs = Object.fromEntries([
@@ -292,6 +303,8 @@ let keyboardCaptured = false;
 let inkMode = initialInkMode;
 let cameraMotion = null;
 let currentCameraView = 'writer';
+let cameraUserAdjusted = false;
+controls.addEventListener('start', () => { cameraUserAdjusted = true; cameraMotion = null; });
 let statusFlash = 0;
 let inspectionEnabled = false;
 let paperActionBusy = false;
@@ -515,6 +528,7 @@ function checkpointInsertedSheet(immediate = false) {
     try {
       const transition = lifecycle.updateInsertedSheet(page.serialize(), {
         inkMode,
+        paperStock: activePaperStock,
         lastColumn: page.column,
         lastLine: page.line,
       });
@@ -603,6 +617,7 @@ function updateDocumentUi() {
   ]) control.disabled = paperActionBusy;
   document.getElementById('download-text').disabled = !activeRecord;
   document.getElementById('download-paper').disabled = !activeRecord;
+  paperActions?.update(lifecycleUiState, paperActionBusy);
   syncArchiveWarning();
   syncInputStatus();
 }
@@ -611,7 +626,7 @@ function rendererForPaperSelection(selection) {
   const activeId = lifecycle.getOverview().insertedSheet?.id;
   if (selection.summary.id === activeId) return { renderer: paperRenderer, temporary: false };
   const selectedDocument = TypewriterDocument.deserialize(selection.page.content);
-  return { renderer: new PaperRenderer(selectedDocument, { ...paperTextureOptions, displayScale: 1 }), temporary: true };
+  return { renderer: new PaperRenderer(selectedDocument, { ...paperTextureOptions, displayScale: 1, paperStock: normalizePaperStock(selection.page.metadata?.paperStock) }), temporary: true };
 }
 
 function paperThumbnail(summary) {
@@ -988,7 +1003,7 @@ function handlePaperRitualEvent(event) {
       announce('Sheet released and ready to inspect.');
       break;
     case 'manuscript-filed':
-      showToast(`SHEET FILED · ${event.totalCount} IN MANUSCRIPT`, 1400);
+      showToast(`Page kept · ${event.totalCount} in your manuscript`, 1600);
       announce('Sheet placed in the manuscript tray.');
       break;
     case 'crumple-start':
@@ -1029,7 +1044,9 @@ const paperView = new PaperLifecycleView({
   inspectionScale: new THREE.Vector3(0.34, 0.34, 0.34),
   manuscriptPosition: new THREE.Vector3(-6.6, 0.18, 1.8),
   manuscriptScale: 0.4,
-  wastebasketPosition: new THREE.Vector3(5.75, 0.08, 1.15),
+  paperweight: room.decor?.paperweight,
+  // Outside the desk's nine-unit half-width, on the room floor beside the console.
+  wastebasketPosition: new THREE.Vector3(12.0, -1.15, -0.6),
   wastebasketRadius: 0.55,
   wastebasketHeight: 1.05,
   wastebasketColor: 0x3f2d20,
@@ -1040,7 +1057,7 @@ const paperView = new PaperLifecycleView({
 function textureForLifecyclePage(record, temporaryTextures, displayScale = 2) {
   try {
     const archivedDocument = TypewriterDocument.deserialize(record.content);
-    const archivedRenderer = new PaperRenderer(archivedDocument, { ...paperTextureOptions, displayScale });
+    const archivedRenderer = new PaperRenderer(archivedDocument, { ...paperTextureOptions, displayScale, paperStock: normalizePaperStock(record.metadata?.paperStock) });
     temporaryTextures.push(archivedRenderer.texture);
     return archivedRenderer.texture;
   } catch {
@@ -1060,44 +1077,20 @@ function syncPaperSceneFromLifecycle() {
 syncPaperSceneFromLifecycle();
 updateDocumentUi();
 
-const CAMERA_PRESETS = {
-  writer: {
-    position: new THREE.Vector3(4.2, 5.8, 13.2),
-    target: new THREE.Vector3(0.7, 2.6, -0.1),
-    fov: 37,
-  },
-  front: {
-    position: new THREE.Vector3(1.2, 5.7, 16.8),
-    target: new THREE.Vector3(1.65, 3.45, -2.1),
-    fov: 43,
-  },
-  mechanism: {
-    position: new THREE.Vector3(7.2, 4.3, 7.0),
-    target: new THREE.Vector3(0.2, 1.25, 0.22),
-  },
-  ribbon: {
-    position: new THREE.Vector3(4.7, 4.25, 4.2),
-    target: new THREE.Vector3(0, 1.76, -0.42),
-  },
-  carriage: {
-    position: new THREE.Vector3(-6.8, 5.0, 7.2),
-    target: new THREE.Vector3(0, 2.55, -0.8),
-  },
-  paper: {
-    position: new THREE.Vector3(6.7, 6.45, 10.1),
-    target: new THREE.Vector3(1.3, 3.35, 2.05),
-  },
-};
 
 function setCameraView(name, duration = 0.9) {
   const preset = CAMERA_PRESETS[name];
   if (!preset) return;
   currentCameraView = name;
+  cameraUserAdjusted = false;
+  configureRoomNavigation(controls, name, inspectionEnabled);
+  const minDistance = controls.minDistance;
+  controls.minDistance = Math.min(minDistance, camera.position.distanceTo(controls.target));
   const compact = window.innerWidth <= 900;
   const compactTarget = compact && name === 'writer' ? new THREE.Vector3(2.8, 2.8, -1.5) : null;
   const topInset = document.querySelector?.('.masthead')?.getBoundingClientRect().bottom ?? 0;
   const bottomInset = window.innerHeight - (document.querySelector?.('.workbench-toolbar')?.getBoundingClientRect().top ?? window.innerHeight);
-  const overview = name === 'front' ? fitRoomOverview(preset, room.decor?.television, window.innerWidth, window.innerHeight, { topInset: topInset + 12, bottomInset: bottomInset + 12 }) : null;
+  const overview = name === 'room' ? fitRoomOverview(preset, room.decor?.television, window.innerWidth, window.innerHeight, { topInset: topInset + 12, bottomInset: bottomInset + 12, collection: room.decor?.collection }) : fitRoomDetail(preset, name, window.innerWidth, window.innerHeight, topInset + 12, bottomInset + 12);
   const toPosition = overview?.position ?? preset.position.clone();
   const toTarget = overview?.target ?? compactTarget ?? preset.target.clone();
   const maxDistance = Math.max(22, toPosition.distanceTo(toTarget) + 0.01);
@@ -1115,6 +1108,7 @@ function setCameraView(name, duration = 0.9) {
     toPosition,
     toTarget,
     maxDistance,
+    minDistance,
     toFov: overview?.fov ?? (compact && name === 'writer' ? 50 : preset.fov ?? 37),
     elapsed: 0,
     duration: reduced ? 0.01 : Math.max(0.001, duration),
@@ -1134,9 +1128,10 @@ function updateCameraMotion(delta) {
   const eased = raw < 0.5 ? 4 * raw ** 3 : 1 - ((-2 * raw + 2) ** 3) / 2;
   camera.position.lerpVectors(cameraMotion.fromPosition, cameraMotion.toPosition, eased);
   controls.target.lerpVectors(cameraMotion.fromTarget, cameraMotion.toTarget, eased);
+  controls.cursor.copy(controls.target);
   camera.fov = THREE.MathUtils.lerp(cameraMotion.fromFov, cameraMotion.toFov, eased);
   camera.setViewOffset(window.innerWidth, window.innerHeight, 0, THREE.MathUtils.lerp(cameraMotion.fromOffsetY, cameraMotion.toOffsetY, eased), window.innerWidth, window.innerHeight);
-  if (raw >= 1) { controls.maxDistance = cameraMotion.maxDistance; cameraMotion = null; }
+  if (raw >= 1) { controls.maxDistance = cameraMotion.maxDistance; controls.minDistance = cameraMotion.minDistance; cameraMotion = null; }
 }
 
 function setDocumentTrayOpen(open, { refocus = false } = {}) {
@@ -1215,7 +1210,7 @@ function setInspectionEnabled(enabled, { moveCamera = true } = {}) {
   inspectionEnabled = enabled;
   refs['inspection-toggle'].setAttribute('aria-pressed', String(enabled));
   model.setInspection(enabled);
-  controls.enabled = enabled;
+  configureRoomNavigation(controls, currentCameraView, enabled);
   canvas.style.cursor = enabled ? 'grab' : 'default';
   if (enabled && moveCamera) setCameraView('mechanism', 0.75);
   return enabled;
@@ -1379,7 +1374,7 @@ function enterStudio() {
   enterStudioButton.setAttribute('aria-busy', 'true');
   refs['intro-overlay'].classList.add('entering');
   if (inspectionEnabled) setInspectionEnabled(false, { moveCamera: false });
-  setCameraView('front', 0.001);
+  setCameraView('room', 0.001);
   updateCameraMotion(1);
   controls.update();
   renderer.render(scene, camera);
@@ -1474,7 +1469,7 @@ guideTabs.forEach((tab, tabIndex) => {
 document.querySelectorAll('.view-button').forEach((button) => button.addEventListener('click', () => {
   dismissTransientPanels();
   const view = button.dataset.view;
-  if ((view === 'writer' || view === 'front') && inspectionEnabled) {
+  if ((['writer', 'front', 'room', 'television', 'library'].includes(view)) && inspectionEnabled) {
     setInspectionEnabled(false, { moveCamera: false });
   }
   setCameraView(view);
@@ -1483,7 +1478,7 @@ document.querySelectorAll('.view-button').forEach((button) => button.addEventLis
 refs['mobile-view-select'].addEventListener('change', () => {
   dismissTransientPanels();
   const view = refs['mobile-view-select'].value;
-  if ((view === 'writer' || view === 'front') && inspectionEnabled) {
+  if ((['writer', 'front', 'room', 'television', 'library'].includes(view)) && inspectionEnabled) {
     setInspectionEnabled(false, { moveCamera: false });
   }
   setCameraView(view);
@@ -1600,7 +1595,8 @@ function finishPaperAction({ refocus = false } = {}) {
 
 function installDocumentFromRecord(record, { animateLoad = false, visible = true } = {}) {
   page = documentFromPaperRecord(record, record.sheetNumber);
-  paperRenderer = new PaperRenderer(page, paperTextureOptions);
+  activePaperStock = normalizePaperStock(record.metadata?.paperStock);
+  paperRenderer = new PaperRenderer(page, { ...paperTextureOptions, paperStock: activePaperStock });
   model.setDocument(page, paperRenderer, { animateLoad });
   model.paperMesh.visible = visible;
   refs['margin-warning'].classList.remove('show');
@@ -1619,6 +1615,7 @@ refs['release-sheet'].addEventListener('click', async () => {
     lifecycleState = transition.state;
     if (transition.persistence?.durable) clearArchiveWarning();
     updateDocumentUi();
+    setDocumentTrayOpen(false);
     setCameraView('paper', 0.55);
     audio.paper();
     await paperView.extract({
@@ -1641,6 +1638,8 @@ refs['keep-sheet'].addEventListener('click', async () => {
     const transition = lifecycle.saveLooseSheetToManuscript({ title: `Sheet ${loose.sheetNumber}` });
     lifecycleState = transition.state;
     if (transition.persistence?.durable) clearArchiveWarning();
+    setDocumentTrayOpen(false);
+    setCameraView('filing', 0.35);
     await paperView.fileToManuscript({
       pageId: loose.id,
       totalCount: transition.state.manuscript.length,
@@ -1725,7 +1724,7 @@ refs['load-sheet'].addEventListener('click', async () => {
   try {
     const nextSheetNumber = lifecycle.getOverview().nextSheetNumber;
     const freshDocument = new TypewriterDocument({ sheetNumber: nextSheetNumber });
-    const transition = lifecycle.loadFreshSheet(freshDocument.serialize(), { inkMode });
+    const transition = lifecycle.loadFreshSheet(freshDocument.serialize(), { inkMode, paperStock: preferredPaperStock });
     lifecycleState = transition.state;
     if (transition.persistence?.durable) clearArchiveWarning();
     installDocumentFromRecord(transition.page, { animateLoad: false, visible: false });
@@ -2065,7 +2064,8 @@ function finishMarginDrag(event) {
   return true;
 }
 
-canvas.addEventListener('pointerdown', (event) => {
+function handleMachinePointerDown(event) {
+  if (event.button !== undefined && event.button !== 0) return;
   if (!refs['intro-overlay'].classList.contains('dismissed')) return;
   if (dismissTransientPanels({ refocus: true })) {
     event.preventDefault();
@@ -2128,7 +2128,33 @@ canvas.addEventListener('pointerdown', (event) => {
     persist();
     event.preventDefault();
   }
+}
+
+// Pinch/pan must not type on the key underneath the first finger. Single-touch
+// taps activate on release; a margin-stop drag retains its existing ownership.
+const pendingMachineTouches = new Map();
+canvas.addEventListener('pointerdown', event => {
+  if (event.pointerType !== 'touch') { handleMachinePointerDown(event); return; }
+  const touch = { event, x: event.clientX, y: event.clientY, cancelled: false };
+  pendingMachineTouches.set(event.pointerId, touch);
+  if (pendingMachineTouches.size > 1) {
+    for (const value of pendingMachineTouches.values()) value.cancelled = true;
+    if (marginDrag) finishMarginDrag({ pointerId: marginDrag.pointerId });
+  } else if (firstInteractiveHit(event)?.userData.specialAction === 'margin-stop') {
+    touch.cancelled = true;
+    handleMachinePointerDown(event);
+  }
 });
+canvas.addEventListener('pointermove', event => {
+  const touch = pendingMachineTouches.get(event.pointerId);
+  if (touch && Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) touch.cancelled = true;
+});
+canvas.addEventListener('pointerup', event => {
+  const touch = pendingMachineTouches.get(event.pointerId);
+  pendingMachineTouches.delete(event.pointerId);
+  if (touch && !touch.cancelled) handleMachinePointerDown(touch.event);
+});
+canvas.addEventListener('pointercancel', event => pendingMachineTouches.delete(event.pointerId));
 
 let hoverFrame = 0;
 canvas.addEventListener('pointermove', (event) => {
@@ -2174,9 +2200,10 @@ function resize() {
     camera.position.set(4.2, 5.8, 13.2);
     controls.target.set(...(compact ? [2.8, 2.8, -1.5] : [0.7, 2.6, -0.1]));
     camera.fov = compact ? 50 : 37;
-  } else if (refs['intro-overlay'].classList.contains('dismissed')) {
-    setCameraView(currentCameraView, 0.01);
+  } else if (currentCameraView === 'room' && !cameraUserAdjusted) {
+    setCameraView('room', 0.01);
   }
+  if (camera.view?.enabled && !cameraMotion) camera.setViewOffset(width, height, 0, camera.view.offsetY * height / camera.view.fullHeight, width, height);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
@@ -2189,8 +2216,8 @@ window.addEventListener('resize', resize);
 const signupRail = document.querySelector('.updates-rail');
 if (signupRail && typeof ResizeObserver === 'function') {
   new ResizeObserver(() => {
-    if (currentCameraView === 'front' && !inspectionEnabled && !cameraMotion
-      && refs['intro-overlay'].classList.contains('dismissed')) setCameraView('front', 0.2);
+    if (currentCameraView === 'room' && !cameraUserAdjusted && !inspectionEnabled && !cameraMotion
+      && refs['intro-overlay'].classList.contains('dismissed')) setCameraView('room', 0.2);
   }).observe(signupRail);
 }
 
@@ -2239,6 +2266,15 @@ function animate(now) {
   // the writing surface. Explicit low quality remains available at DPR 1.
 }
 
+const paperStockSelect = document.getElementById('paper-stock');
+paperStockSelect.value = preferredPaperStock;
+paperStockSelect.addEventListener('change', () => {
+  preferredPaperStock = normalizePaperStock(paperStockSelect.value);
+  try { localStorage.setItem(PAPER_STOCK_KEY, preferredPaperStock); } catch { /* session choice still works */ }
+});
+initPaperStockPicker({ select: paperStockSelect });
+paperActions = initPaperContextActions();
+updateDocumentUi();
 const workbench = initWorkbench({
   onOpen: () => { setKeyboardCaptured(false); model.setShiftHeld(false); },
   onClose: () => { revealQuietInterface(); },
@@ -2247,7 +2283,7 @@ const workbench = initWorkbench({
 await paintLoadingStage('Your next page is almost ready…');
 // Orientation can change while the room is being constructed.
 resize();
-setCameraView('front', 0.001);
+setCameraView('room', 0.001);
 updateCameraMotion(1);
 controls.update();
 if (renderer.compileAsync) await renderer.compileAsync(scene, camera).catch(() => {});

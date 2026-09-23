@@ -272,6 +272,12 @@ export class PaperLifecycleView {
 
     this.buildManuscriptTray(options);
     this.buildWastebasket(options);
+    // Geometry/material ownership stays with room decor; this view owns its pose.
+    this.paperweight = options.paperweight ?? null;
+    if (this.paperweight) {
+      this.root.add(this.paperweight);
+      this.settlePaperweight();
+    }
   }
 
   emit(type, detail = {}) {
@@ -649,6 +655,14 @@ export class PaperLifecycleView {
       this.stackLayers.setMatrixAt(index, transform.matrix);
     }
     this.stackLayers.instanceMatrix.needsUpdate = true;
+    this.settlePaperweight();
+  }
+
+  settlePaperweight(count = this.manuscriptCount) {
+    if (!this.paperweight) return;
+    this.paperweight.position.copy(this.manuscriptTopPose(count).position);
+    this.paperweight.position.z += 0.35;
+    this.paperweight.rotation.set(0, 0, 0);
   }
 
   manuscriptTopPose(count = this.manuscriptCount) {
@@ -696,8 +710,17 @@ export class PaperLifecycleView {
     this.phase = 'filing';
     this.emit('file-start', { pageId: active.pageId, totalCount: finalCount });
 
-    return this.beginMotion('file', options.duration ?? 0.72, (linear) => {
-      const eased = easeInOutCubic(clamp01(linear / 0.87));
+    const weightStart = this.paperweight?.position.clone();
+    const weightEnd = target.position.clone().add(new THREE.Vector3(0, 0, 0.35));
+    return this.beginMotion('file', options.duration ?? (this.paperweight ? 1.8 : 0.72), (linear) => {
+      const eased = easeInOutCubic(clamp01(this.paperweight ? (linear - 0.20) / 0.56 : linear / 0.87));
+      if (this.paperweight) {
+        // Lift first, hold while the page slides flat, then gently lower onto it.
+        const lift = easeInOutCubic(clamp01(linear / 0.20));
+        const lower = easeInOutCubic(clamp01((linear - 0.78) / 0.22));
+        this.paperweight.position.lerpVectors(weightStart, weightEnd, lower);
+        this.paperweight.position.y += 1.05 * lift * (1 - lower);
+      }
       const point = sampleThrowArc(startPosition, target.position, eased, {
         seed: options.seed ?? active.pageId.length,
         height: options.arcHeight ?? 0.38,
@@ -706,7 +729,7 @@ export class PaperLifecycleView {
       active.mesh.position.set(point.x, point.y, point.z);
       active.mesh.quaternion.slerpQuaternions(startQuaternion, target.quaternion, eased);
       active.mesh.scale.lerpVectors(startScale, target.scale, eased);
-      const settle = clamp01((linear - 0.78) / 0.22);
+      const settle = clamp01((linear - (this.paperweight ? 0.58 : 0.78)) / (this.paperweight ? 0.18 : 0.22));
       interpolatePositions(active.mesh.geometry, filingPositions, active.mesh.userData.flatPositions, eased);
       const base = active.mesh.geometry.attributes.position.array.slice();
       flexPaperGeometry(active.mesh.geometry, base, this.paperWidth, this.paperHeight, { curl: 0, impulse: 0.65 * (1 - settle), progress: linear, reducedMotion: this.reducedMotion });
@@ -1086,6 +1109,8 @@ export class PaperLifecycleView {
     }
     this.setSourceVisible(true);
     this.parent.remove(this.root);
+    // The shared sculpture is released by PhiladelphiaRoomDecor, not twice here.
+    if (this.paperweight) this.root.remove(this.paperweight);
     disposeObject(this.root);
     this.root.clear();
     this.activePage = null;

@@ -15,8 +15,8 @@ describe('streamable standalone landing', () => {
     expect(words).toContain('Words cross distance.');
     expect(words).toContain('No permission needed.');
     expect(overture.match(/class="prelude-stanza"/g)).toHaveLength(4);
-    expect(overture.match(/--release-delay:/g)).toHaveLength(48);
-    expect(overture.match(/class="prelude-smoke"/g)).toHaveLength(6);
+    expect(overture).not.toContain('--release-delay:');
+    expect(overture).not.toContain('prelude-smoke');
     expect(overture).not.toMatch(/<img|<canvas|<video|data:image|src=/);
     expect(html.indexOf('class="landing-prelude"')).toBeLessThan(html.indexOf('src="/src/main.js"'));
     expect(html).toContain('paper-overture-feed');

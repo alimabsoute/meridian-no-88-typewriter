@@ -193,6 +193,18 @@ describe('landing assembly cancellation', () => {
     expect(afterPaint).toHaveBeenCalledOnce();
   });
 
+  it('bounds a stalled graphics driver instead of leaving initialization pending forever', async () => {
+    let time = 0;
+    const renderer = {
+      extensions: { get: () => ({ COMPLETION_STATUS_KHR: 1 }) },
+      info: { programs: [{ program: 'stalled' }] },
+      getContext: () => ({ getProgramParameter: () => false }),
+    };
+    const afterPaint = vi.fn(async () => { time += 1000; return true; });
+    await expect(waitForLandingPrograms(renderer, afterPaint, () => false, { timeoutMs: 3000, now: () => time })).rejects.toThrow('did not become ready');
+    expect(afterPaint).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps a cancellable paint boundary on devices without parallel shader support', async () => {
     const renderer = { extensions: { get: () => null }, getContext: vi.fn() };
     const afterPaint = vi.fn(async () => true);

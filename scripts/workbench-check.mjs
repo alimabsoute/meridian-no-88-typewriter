@@ -16,6 +16,7 @@ try {
     const ids = await page.locator('[id]').evaluateAll(els => els.map(el => el.id));
     assert.equal(new Set(ids).size, ids.length, 'All IDs unique');
     for (const name of ['paper', 'machine', 'room', 'view', 'ink', 'export']) {
+      if (['ink', 'machine', 'export'].includes(name)) await page.click('#workbench-more');
       await page.click(`[data-workbench="${name}"]`);
       await page.waitForFunction(name => document.querySelector('#app').dataset.workbenchPanel === name, name);
       assert.equal(await page.locator('.workbench-panel:visible').count(), 1, 'One panel at a time');
@@ -26,7 +27,7 @@ try {
         await page.click('.audio-mix summary');
         assert.equal(await page.locator('.audio-mix input:visible').count(), 5, 'All five audio channels available');
       }
-      if (name === 'view') assert.equal(await page.locator('[data-view]:visible').count(), 5);
+      if (name === 'view') assert.equal(await page.locator('[data-view]:visible').count(), 8);
       if (name === 'ink') assert.equal(await page.locator('[data-ink]:visible').count(), 3);
       if (name === 'export') {
         assert(await page.locator('#download-text').isVisible());
@@ -35,7 +36,7 @@ try {
       }
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('.workbench-panel:visible').count(), 0);
-      assert.equal(await page.locator(`[data-workbench="${name}"]`).evaluate(el => document.activeElement === el), true, 'Escape returns focus');
+      assert.equal(await page.locator(['ink', 'machine', 'export'].includes(name) ? '#workbench-more' : `[data-workbench="${name}"]`).evaluate(el => document.activeElement === el), true, 'Escape returns focus');
     }
     await page.click('[data-workbench="paper"]');
     await page.click('[data-workbench="room"]');

@@ -49,6 +49,25 @@ describe('paper lifecycle motion helpers', () => {
 });
 
 describe('PaperLifecycleView', () => {
+  it('keeps discarded sheets aligned with a floor-mounted basket beside the desk', () => {
+    const view = new PaperLifecycleView({
+      parent: new THREE.Scene(),
+      wastebasketPosition: new THREE.Vector3(10.35, -1.15, -1.8),
+      wastebasketRadius: 0.55,
+      wastebasketHeight: 1.05,
+    });
+    expect(view.wastebasketGroup.position.x - view.wastebasketRadius).toBeGreaterThan(9);
+    const bounds = new THREE.Box3().setFromObject(view.wastebasketGroup);
+    expect(bounds.min.y).toBeCloseTo(-1.15, 5);
+    const inside = view.discardLanding(17, 0);
+    expect(inside.y).toBeGreaterThan(-1.15);
+    expect(inside.y).toBeLessThan(-0.1);
+    expect(Math.abs(inside.x - 10.35)).toBeLessThan(0.55);
+    const floor = view.discardLanding(17, 0, { location: 'floor' });
+    expect(floor.y).toBeCloseTo(-1.03, 5);
+    view.dispose();
+  });
+
   it('extracts, crumples, throws, and exposes a recoverable raycast target', async () => {
     const scene = new THREE.Scene();
     const source = new THREE.Mesh(new THREE.PlaneGeometry(5.8, 7.505, 8, 10));

@@ -569,7 +569,20 @@ export class PhiladelphiaWritingRoom {
     const wallRight = 15;
     const wallTop = 12.5;
 
+    // Give the freestanding console and basket a shared physical ground plane.
+    // A single opaque surface adds two triangles and no texture downloads.
+    const floor = this._mesh(
+      new THREE.PlaneGeometry(60, 23),
+      this._material(new THREE.MeshStandardMaterial({ color: 0x514033, roughness: 0.88, metalness: 0 })),
+      { position: [0, -1.16, 5.4], rotation: [-Math.PI / 2, 0, 0] },
+    );
+    floor.name = 'WritingRoomFloor';
+    this.environment.add(floor);
+
     const panels = [
+      { width: 15, height: wallTop + 1.16, x: -22.5, y: (wallTop - 1.16) / 2 },
+      { width: 15, height: wallTop + 1.16, x: 22.5, y: (wallTop - 1.16) / 2 },
+      { width: 30, height: 1.16, x: 0, y: -0.58 },
       { width: minX - wallLeft, height: wallTop, x: (wallLeft + minX) / 2, y: wallTop / 2 },
       { width: wallRight - maxX, height: wallTop, x: (maxX + wallRight) / 2, y: wallTop / 2 },
       { width: WINDOW.width, height: minY, x: WINDOW.centerX, y: minY / 2 },

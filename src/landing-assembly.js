@@ -36,7 +36,8 @@ const smooth = (value) => {
 // Three's compileAsync timer can outlive disposed preview materials. Poll
 // immutable native program handles using our cancellable paint boundary
 // instead; KHR's completion query does not stall the browser while linking.
-export async function waitForLandingPrograms(renderer, afterPaint, cancelled) {
+export async function waitForLandingPrograms(renderer, afterPaint, cancelled, { timeoutMs = 12000, now = () => performance.now() } = {}) {
+  const deadline = now() + timeoutMs;
   if (cancelled()) return false;
   const extension = renderer.extensions.get('KHR_parallel_shader_compile');
   if (!extension) return Boolean(await afterPaint()) && !cancelled();
@@ -44,6 +45,7 @@ export async function waitForLandingPrograms(renderer, afterPaint, cancelled) {
   const programs = renderer.info.programs.map((program) => program.program);
   while (!cancelled()) {
     if (programs.every((program) => context.getProgramParameter(program, extension.COMPLETION_STATUS_KHR))) return true;
+    if (now() >= deadline) throw new Error('Preview shaders did not become ready in time');
     if (!await afterPaint()) return false;
   }
   return false;
@@ -379,7 +381,7 @@ export function startLandingAssembly({ container, landing }) {
       resolveReady(getState());
     }
   };
-  const cancelled = () => disposed || landing?.started;
+  const cancelled = () => disposed || phase === 'unavailable' || landing?.started;
   const afterPaint = () => new Promise((resolve) => {
     if (cancelled()) return resolve(false);
     const pending = { resolve, timer: 0 };
@@ -534,6 +536,7 @@ export function startLandingAssembly({ container, landing }) {
     if (disposed || phase === 'unavailable') return;
     error = caught instanceof Error ? caught.message : String(caught);
     setPhase('unavailable');
+    landing?.previewUnavailable?.();
     cleanup();
     settleReady();
   }
@@ -601,8 +604,9 @@ export function startLandingAssembly({ container, landing }) {
       stageStart = performance.now();
       // Keep the real walnut desk and leather blotter, but let the light itself
       // remain off-camera. Hidden studio resources are still released below.
-      model.root.getObjectByName('DeskLamp').visible = false;
-      model.root.children.at(-1).visible = false;
+      const lamp = model.root.getObjectByName('DeskLamp');
+      if (lamp) lamp.visible = false;
+      // Do not hide the last child: model construction order is not a contract.
       model.root.updateWorldMatrix(true, true);
       assembly = createLandingAssemblyParts(model);
       assembly.setTime(ASSEMBLY_SECONDS);
@@ -668,7 +672,10 @@ export function startLandingAssembly({ container, landing }) {
       render();
       recordStartup('first-render', stageStart);
       if (reducedMotion) renderer.shadowMap.autoUpdate = false;
+      // Reveal only after the first submitted frame has reached a paint boundary.
+      if (!await afterPaint()) return dispose();
       container.classList.add('assembly-visible');
+      landing?.previewReady?.();
       resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(resize) : null;
       resizeObserver?.observe(container);
       document.addEventListener('visibilitychange', onVisibility);

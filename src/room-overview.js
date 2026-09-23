@@ -2,14 +2,14 @@ import * as THREE from 'three';
 
 /** Preserve the room angle while keeping the entire TV inside the Front view.
  * Close inspection/Writer cameras deliberately retain their original framing. */
-export function fitRoomOverview(preset, television, width, height, { topInset = 0, bottomInset = 0 } = {}) {
+export function fitRoomOverview(preset, television, width, height, { topInset = 0, bottomInset = 0, collection = null } = {}) {
   const target = preset.target.clone();
   const position = preset.position.clone();
   const compactPortrait = width <= 900 && width / height < 1.25;
-  const fov = compactPortrait ? 60 : width <= 900 ? 50 : preset.fov;
+  const fov = compactPortrait ? 65 : width <= 900 ? 50 : preset.fov;
   if (compactPortrait) {
     // Center the useful portrait scene between the TV and the writing machine.
-    const offset = new THREE.Vector3(-2.2, 2.6, -2.1).sub(target);
+    const offset = new THREE.Vector3(collection ? 0 : -4.5, 2.6, -2.1).sub(target);
     target.add(offset); position.add(offset);
   }
   const offsetY = -(topInset - bottomInset) / 2;
@@ -23,6 +23,10 @@ export function fitRoomOverview(preset, television, width, height, { topInset = 
   let distance = position.distanceTo(target);
   television.updateWorldMatrix(true, false);
   const points = [];
+  if (collection) {
+    const bounds = new THREE.Box3().setFromObject(collection);
+    for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) points.push(new THREE.Vector3(x, y, z));
+  }
   // Include the beveled frame, not only the illuminated picture.
   for (const x of [-2.76, 2.76]) for (const y of [-1.62, 1.62]) {
     points.push(new THREE.Vector3(x, y, 0.53).applyMatrix4(television.matrixWorld));
